@@ -220,3 +220,4 @@ data/*.xlsx
 data/*.csv
 data/*.tsv
 out/*
+logs/*

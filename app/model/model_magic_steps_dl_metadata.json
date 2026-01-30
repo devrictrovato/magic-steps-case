@@ -1,0 +1,14 @@
+{
+  "model_name": "model_magic_steps_dl",
+  "best_params": {
+    "hidden_layers": [
+      64
+    ],
+    "dropout": 0.2,
+    "lr": 0.01,
+    "batch_size": 64,
+    "epochs": 100
+  },
+  "final_train_loss": 0.0541578872265139,
+  "timestamp": "2026-01-30T18:58:20.147264"
+}
