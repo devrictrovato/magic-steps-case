@@ -1,0 +1,9 @@
+project: magic_steps
+registry: E:\Repos\magic-steps-case\out\features/data/registry.db
+provider: local
+online_store:
+    type: sqlite
+    path: E:\Repos\magic-steps-case\out\features/data/online_store.db
+offline_store:
+    type: file
+entity_key_serialization_version: 2

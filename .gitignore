@@ -219,5 +219,5 @@ __marimo__/
 data/*.xlsx
 data/*.csv
 data/*.tsv
-out/*
+# out/*
 logs/*

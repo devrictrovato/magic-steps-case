@@ -5,7 +5,7 @@ Configurações centralizadas do projeto Magic Steps MLOps.
 from pathlib import Path
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 
@@ -32,40 +32,40 @@ for directory in [DATA_DIR, ARTIFACTS_DIR, MODELS_DIR, LOGS_DIR]:
 class Settings(BaseSettings):
     """Configurações de ambiente do projeto."""
     
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
+    
     # Projeto
     project_name: str = "magic_steps_mlops"
-    environment: str = Field(default="development", env="ENVIRONMENT")
+    environment: str = "development"
     
     # AWS
-    aws_region: str = Field(default="us-east-1", env="AWS_REGION")
-    aws_access_key_id: str = Field(default="", env="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: str = Field(default="", env="AWS_SECRET_ACCESS_KEY")
-    s3_bucket: str = Field(default="magic-steps-ml", env="S3_BUCKET")
+    aws_region: str = "us-east-1"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    s3_bucket: str = "magic-steps-ml"
     
     # Database
-    db_host: str = Field(default="localhost", env="DB_HOST")
-    db_port: int = Field(default=5432, env="DB_PORT")
-    db_name: str = Field(default="magic_steps_features", env="DB_NAME")
-    db_user: str = Field(default="postgres", env="DB_USER")
-    db_password: str = Field(default="", env="DB_PASSWORD")
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_name: str = "magic_steps_features"
+    db_user: str = "postgres"
+    db_password: str = ""
     
     # Redis (para Feast online store)
-    redis_host: str = Field(default="localhost", env="REDIS_HOST")
-    redis_port: int = Field(default=6379, env="REDIS_PORT")
+    redis_host: str = "localhost"
+    redis_port: int = 6379
     
     # MLflow
-    mlflow_tracking_uri: str = Field(
-        default="http://localhost:5000", 
-        env="MLFLOW_TRACKING_URI"
-    )
+    mlflow_tracking_uri: str = "http://localhost:5000"
     mlflow_experiment_name: str = "magic_steps_experiment"
     
     # Random State
     random_state: int = 42
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 # ============================================================

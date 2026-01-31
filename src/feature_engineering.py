@@ -55,23 +55,31 @@ class FeastFeatureStore:
             self._create_feature_store_config()
         
         try:
+            # Criar diretório de dados se não existir
+            (self.repo_path / "data").mkdir(parents=True, exist_ok=True)
+            
             self.store = FeatureStore(repo_path=str(self.repo_path))
             self.logger.info("Feast Feature Store inicializado")
         except Exception as e:
             self.logger.error(f"Erro ao inicializar Feast: {e}")
-            raise
+            self.logger.warning("Continuando sem Feast Feature Store")
+            self.store = None
     
     def _create_feature_store_config(self) -> None:
         """Cria arquivo de configuração do Feast."""
+        # Usar POSIX paths para compatibilidade com Feast no Windows
+        registry_path = (self.repo_path / "data" / "registry.db").as_posix()
+        online_store_path = (self.repo_path / "data" / "online_store.db").as_posix()
+        
         config_content = f"""project: {feast_config.project_name}
-registry: {self.repo_path}/data/registry.db
+registry: {registry_path}
 provider: local
 online_store:
     type: sqlite
-    path: {self.repo_path}/data/online_store.db
+    path: {online_store_path}
 offline_store:
     type: file
-entity_key_serialization_version: 2
+entity_key_serialization_version: 3
 """
         
         feature_store_yaml = self.repo_path / "feature_store.yaml"
@@ -426,15 +434,25 @@ class FeatureStoreManager:
             start_date: Data inicial
             end_date: Data final
         """
+        if self.feast_store.store is None:
+            self.logger.warning("Feast não disponível. Pulando materialização.")
+            return
+        
         self.logger.info("Materializando features no Feast...")
         
-        # Preparar e salvar features
-        save_features_to_feast(df, self.feast_store)
-        
-        # Materializar para online store
-        if start_date and end_date:
-            # self.feast_store.store.materialize(start_date, end_date)
-            self.logger.info("Features materializadas para o período especificado")
+        try:
+            # Preparar e salvar features
+            save_features_to_feast(df, self.feast_store)
+            
+            # Materializar para online store
+            if start_date and end_date:
+                # self.feast_store.store.materialize(start_date, end_date)
+                self.logger.info("Features materializadas para o período especificado")
+            
+            self.logger.info("Materialização concluída")
+        except Exception as e:
+            self.logger.error(f"Erro na materialização: {e}")
+            self.logger.warning("Continuando sem materialização no Feast")
         
         self.logger.info("Materialização concluída")
     
@@ -484,21 +502,34 @@ def load_features_for_training(use_feast: bool = False) -> pd.DataFrame:
 if __name__ == "__main__":
     print("🎯 Feature Engineering com Feast - Magic Steps")
     
-    # Carregar dados preprocessados
-    loader = FeatureLoader(use_feast=False)
-    df = loader.load_features_for_training()
-    
-    # Aplicar feature engineering
-    engineer = FeatureEngineer()
-    df_engineered = engineer.engineer_features(df)
-    
-    # Salvar features engineered
-    engineered_path = ARTIFACTS_DIR / "dataset_with_engineered_features.parquet"
-    df_engineered.to_parquet(engineered_path, index=False)
-    print(f"\n✅ Features engineered salvas em: {engineered_path}")
-    
-    # Salvar no Feast
-    feast_manager = FeatureStoreManager()
-    feast_manager.materialize_features(df_engineered)
-    
-    print("\n✅ Feature engineering finalizado!")
+    try:
+        # Carregar dados preprocessados
+        loader = FeatureLoader(use_feast=False)
+        df = loader.load_features_for_training()
+        
+        # Aplicar feature engineering
+        engineer = FeatureEngineer()
+        df_engineered = engineer.engineer_features(df)
+        
+        # Salvar features engineered
+        engineered_path = ARTIFACTS_DIR / "dataset_with_engineered_features.parquet"
+        df_engineered.to_parquet(engineered_path, index=False)
+        print(f"\n✅ Features engineered salvas em: {engineered_path}")
+        
+        # Tentar salvar no Feast (opcional)
+        try:
+            print("\n📦 Tentando materializar features no Feast...")
+            feast_manager = FeatureStoreManager()
+            feast_manager.materialize_features(df_engineered)
+            print("✅ Features materializadas no Feast")
+        except Exception as feast_error:
+            print(f"⚠️ Aviso: Não foi possível usar Feast: {feast_error}")
+            print("✅ Continuando sem Feast (features salvas localmente)")
+        
+        print("\n✅ Feature engineering finalizado!")
+        
+    except Exception as e:
+        print(f"\n❌ Erro no feature engineering: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)

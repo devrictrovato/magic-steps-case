@@ -270,7 +270,7 @@ class Visualizer:
         Args:
             save_dir: Diretório para salvar figuras
         """
-        self.save_dir = save_dir or ARTIFACTS_DIR / "plots"
+        self.save_dir = save_dir or ARTIFACTS_DIR / "imgs"
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.logger = setup_logger(self.__class__.__name__)
         

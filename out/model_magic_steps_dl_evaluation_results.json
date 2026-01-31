@@ -1,0 +1,29 @@
+{
+  "metrics": {
+    "accuracy": 0.9752342704149933,
+    "precision": 0.9528061224489796,
+    "recall": 1.0,
+    "f1_score": 0.9758327890267798,
+    "roc_auc": 0.9986487673137888
+  },
+  "confusion_matrix": [
+    [
+      710,
+      37
+    ],
+    [
+      0,
+      747
+    ]
+  ],
+  "classification_report": "              precision    recall  f1-score   support\n\n Não Atingiu       1.00      0.95      0.97       747\n     Atingiu       0.95      1.00      0.98       747\n\n    accuracy                           0.98      1494\n   macro avg       0.98      0.98      0.98      1494\nweighted avg       0.98      0.98      0.98      1494\n",
+  "model_params": {
+    "hidden_layers": [
+      64
+    ],
+    "dropout": 0.2,
+    "lr": 0.01,
+    "batch_size": 64,
+    "epochs": 100
+  }
+}
