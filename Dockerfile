@@ -75,10 +75,10 @@ COPY app/routes.py    app/
 
 # ── artefactos do modelo ──────────────────────────────────
 # main.py resolve os caminhos com:
-#   BASE_DIR = Path(__file__).resolve().parent.parent  →  /app
+#   BASE_DIR          = Path(__file__).resolve().parent.parent   # sobe de app/ → raiz
 #   MODEL_PATH        = BASE_DIR / "app/model" / "model_magic_steps_dl.pt"
 #   PREPROCESSOR_PATH = BASE_DIR / "out" / "preprocessor.joblib"
-COPY app/model/model_magic_steps_dl.pt out/
+COPY app/model/model_magic_steps_dl.pt app/model/
 COPY out/preprocessor.joblib out/
 
 # ── .env (opcional) ───────────────────────────────────────
