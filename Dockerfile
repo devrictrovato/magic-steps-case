@@ -39,7 +39,7 @@ COPY requirements.txt .
 # --no-cache-dir     → não guardar cache do pip dentro da imagem
 # --prefix=/install  → instalar em /install para copiar depois
 RUN pip install --no-cache-dir --prefix=/install \
-    -r requirements.txt
+    -r <(grep -v pywin32 requirements.txt)
 
 
 # ─────────────────────────────────────────────────────────────
