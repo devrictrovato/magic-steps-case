@@ -102,9 +102,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
 # ── entry point ───────────────────────────────────────────
 # "main:app" → Python procura main.py no PYTHONPATH (/app/app/)
 #              e dentro dele a instância FastAPI chamada "app".
-ENTRYPOINT ["uvicorn", "main:app",
-            "--host", "0.0.0.0",
-            "--workers", "1",
-            "--log-level", "info",
-            "--access-log",
-            "--no-reload"]
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--workers", "1", "--log-level", "info", "--access-log", "--no-reload"]
