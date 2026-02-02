@@ -76,10 +76,10 @@ COPY app/routes.py    app/
 # ── artefactos do modelo ──────────────────────────────────
 # main.py resolve os caminhos com:
 #   BASE_DIR = Path(__file__).resolve().parent.parent  →  /app
-#   MODEL_PATH        = BASE_DIR / "out" / "model_magic_steps_dl.pt"
+#   MODEL_PATH        = BASE_DIR / "app/model" / "model_magic_steps_dl.pt"
 #   PREPROCESSOR_PATH = BASE_DIR / "out" / "preprocessor.joblib"
-COPY out/model_magic_steps_dl.pt   out/
-COPY out/preprocessor.joblib       out/
+COPY app/model/model_magic_steps_dl.pt out/
+COPY out/preprocessor.joblib out/
 
 # ── .env (opcional) ───────────────────────────────────────
 # pydantic-settings lê .env se presente; se não existir usa defaults.
