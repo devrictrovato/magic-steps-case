@@ -1,20 +1,16 @@
 # =============================================================
-# Dockerfile — Magic Steps Prediction API (produção)
+# Dockerfile — Magic Steps Prediction API (produção | CPU)
 # =============================================================
 #
 # Multi-stage build:
 #   Stage 1 «builder»  → instala dependências numa imagem com
-#                         compiladores (gcc, etc.) e gera wheels.
-#   Stage 2 «runtime»  → imagem magra; copia apenas wheels +
-#                         código da API + artefactos do modelo.
+#                         compiladores (gcc, etc.)
+#   Stage 2 «runtime»  → imagem magra; copia apenas dependências
+#                         + código da API + artefactos do modelo
 #
 # Uso:
 #   docker build -t magic-steps-api .
 #   docker run -p 8000:8000 magic-steps-api
-#
-# Com GPU (NVIDIA):
-#   docker build --platform linux/amd64 -t magic-steps-api .
-#   docker run --gpus all -p 8000:8000 magic-steps-api
 #
 # =============================================================
 
@@ -32,14 +28,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Copiar o ficheiro de dependências do requirements.txt
+# Copiar o ficheiro de dependências
 COPY requirements.txt .
 
 # Instalar dependências numa pasta isolada (não no sistema).
-# --no-cache-dir     → não guardar cache do pip dentro da imagem
-# --prefix=/install  → instalar em /install para copiar depois
-RUN pip install --no-cache-dir --prefix=/install \
-    -r <(grep -v pywin32 requirements.txt)
+# Remove pywin32 (somente Windows) de forma compatível com /bin/sh
+RUN grep -v pywin32 requirements.txt > requirements-linux.txt && \
+    pip install --no-cache-dir --prefix=/install -r requirements-linux.txt && \
+    rm requirements-linux.txt
 
 
 # ─────────────────────────────────────────────────────────────
@@ -47,59 +43,49 @@ RUN pip install --no-cache-dir --prefix=/install \
 # ─────────────────────────────────────────────────────────────
 FROM python:3.10.9-slim AS runtime
 
-# ── utilizador não-root (segurança) ──────────────────────
+# ── utilizador não-root (segurança) ──────────────────────────
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
 
-# ── dependências do sistema mínimas ──────────────────────
-# libgomp1  → OpenMP, necessário pelo torch
+# ── dependências mínimas do sistema ──────────────────────────
+# libgomp1 → OpenMP (necessário para torch CPU)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── copiar dependências compiladas do builder ────────────
+# ── copiar dependências do builder ───────────────────────────
 COPY --from=builder /install /usr/local
 
-# ── PYTHONPATH ────────────────────────────────────────────
-# main.py / routes.py / context.py vivem em /app/app/ e usam
-# imports planos ("from context import …", não "from app.context").
-# PYTHONPATH=/app/app torna esses módulos visíveis ao Python.
+# ── PYTHONPATH ───────────────────────────────────────────────
+# main.py / routes.py / context.py vivem em /app/app/
+# PYTHONPATH=/app/app permite imports planos
 ENV PYTHONPATH=/app/app
 
-# ── diretório de trabalho ─────────────────────────────────
+# ── diretório de trabalho ────────────────────────────────────
 WORKDIR /app
 
-# ── código da API (apenas os 3 ficheiros que o runtime precisa)
-COPY app/context.py   app/
-COPY app/main.py      app/
-COPY app/routes.py    app/
+# ── código da API ────────────────────────────────────────────
+COPY app/context.py app/
+COPY app/main.py    app/
+COPY app/routes.py  app/
 
-# ── artefactos do modelo ──────────────────────────────────
-# main.py resolve os caminhos com:
-#   BASE_DIR          = Path(__file__).resolve().parent.parent   # sobe de app/ → raiz
-#   MODEL_PATH        = BASE_DIR / "app/model" / "model_magic_steps_dl.pt"
-#   PREPROCESSOR_PATH = BASE_DIR / "out" / "preprocessor.joblib"
+# ── artefactos do modelo ─────────────────────────────────────
 COPY app/model/model_magic_steps_dl.pt app/model/
 COPY out/preprocessor.joblib out/
 
-# ── .env (opcional) ───────────────────────────────────────
-# pydantic-settings lê .env se presente; se não existir usa defaults.
-# O wildcard .env* impede que o COPY falhe quando o ficheiro não existe.
+# ── .env (opcional) ──────────────────────────────────────────
 COPY .env* .
 
-# ── ownership para utilizador não-root ────────────────────
+# ── permissões ───────────────────────────────────────────────
 RUN chown -R appuser:appuser /app
 
 USER appuser
 
-# ── porta ─────────────────────────────────────────────────
+# ── porta ────────────────────────────────────────────────────
 EXPOSE 8000
 
-# ── healthcheck ───────────────────────────────────────────
-# wget está disponível no slim; sem necessidade de instalar curl.
+# ── healthcheck ──────────────────────────────────────────────
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
   CMD wget --no-check-certificate -qO- http://localhost:8000/health || exit 1
 
-# ── entry point ───────────────────────────────────────────
-# "main:app" → Python procura main.py no PYTHONPATH (/app/app/)
-#              e dentro dele a instância FastAPI chamada "app".
+# ── entry point ──────────────────────────────────────────────
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--workers", "1", "--log-level", "info", "--access-log", "--no-reload"]
