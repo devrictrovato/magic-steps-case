@@ -87,3 +87,4 @@ Werkzeug
 wrapt
 xmltodict
 zipp
+torch
