@@ -2,27 +2,35 @@
 # Dockerfile — Magic Steps Prediction API (Render | CPU)
 # =============================================================
 
-FROM python:3.10.9-slim
+FROM python:3.10-slim
 
-# Dependências mínimas do sistema (torch CPU)
+# Evita .pyc e melhora logs no Render
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Dependências mínimas do sistema (scikit-learn, scipy, psycopg2)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
     libgomp1 \
     gcc \
     g++ \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# Diretório da app
+# Diretório da aplicação
 WORKDIR /app
 
-# Instalar dependências Python
+# Copia apenas requirements primeiro (melhor cache)
 COPY requirements.txt .
+
+# Atualiza pip e instala dependências
 RUN pip install --upgrade pip \
- && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt
 
 # PYTHONPATH para imports planos
 ENV PYTHONPATH=/app/app
 
-# Código da API
+# Código da API (mantendo estrutura original)
 COPY app/context.py app/
 COPY app/main.py    app/
 COPY app/routes.py  app/
@@ -34,7 +42,7 @@ COPY out/preprocessor.joblib out/
 # .env opcional
 COPY .env* .
 
-# Render fornece PORT
+# Porta padrão Render
 ENV PORT=8000
 EXPOSE 8000
 
