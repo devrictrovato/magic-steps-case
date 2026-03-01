@@ -8,14 +8,12 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Dependências mínimas do sistema + redis e mongodb para serviços locais
+# Dependências mínimas do sistema (REMOVIDO mongodb e redis)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgomp1 \
     gcc \
     g++ \
-    redis-server \
-    mongodb \
     && rm -rf /var/lib/apt/lists/*
 
 # Diretório da aplicação
@@ -31,13 +29,13 @@ RUN pip install --upgrade pip \
 # PYTHONPATH para imports planos
 ENV PYTHONPATH=/app/app
 
-# environment defaults (can be overridden by docker run or compose)
+# Variáveis de ambiente (usar serviços externos no Render)
 ENV REDIS_HOST=redis
 ENV REDIS_PORT=6379
-ENV MONGO_URI=mongodb://mongo:27017
+ENV MONGO_URI=mongodb+srv://dbuser:6r2jt27yAF7Sn4ZH@cluster-magic-steps.ksobi7u.mongodb.net/?appName=cluster-magic-steps
 ENV MONGO_DB=magic_steps_logs
 
-# Código da API (mantendo estrutura original)
+# Código da API
 COPY app/context.py app/
 COPY app/main.py    app/
 COPY app/routes.py  app/
@@ -53,8 +51,5 @@ COPY .env* .
 ENV PORT=8000
 EXPOSE 8000
 
-# Processo único (Render-friendly)
-# se estiver usando contêiner único para demos, iniciamos redis e mongo antes de levantar a API
-CMD ["sh", "-c", "redis-server --daemonize yes && \
-              mongod --fork --logpath /var/log/mongodb.log && \
-              uvicorn main:app --host 0.0.0.0 --port ${PORT} --log-level info"]
+# Apenas sobe a API
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
