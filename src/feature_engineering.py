@@ -15,7 +15,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from settings import data_config, feast_config, FEAST_REPO_DIR, ARTIFACTS_DIR
-from utils import setup_logger, DWClient
+from utils import setup_logger
 
 
 # ============================================================
@@ -458,23 +458,14 @@ class FeatureStoreManager:
     
     def register_features_in_dw(self, df: pd.DataFrame) -> None:
         """
-        Registra features no Data Warehouse.
+        *Deprecated* stub for DW registration.
         
-        Args:
-            df: DataFrame com features
+        We no longer maintain a Data Warehouse - all external storage is
+        handled via MongoDB (logs) and Redis (Feast online store). This
+        method remains for compatibility but does nothing.
         """
-        self.logger.info("Registrando features no Data Warehouse...")
-        
-        try:
-            dw_client = DWClient()
-            dw_client.insert_dataframe(
-                df,
-                table_name="ml_features",
-                if_exists="replace",
-            )
-            self.logger.info("Features registradas no DW com sucesso")
-        except Exception as e:
-            self.logger.error(f"Erro ao registrar no DW: {e}")
+        self.logger.info("register_features_in_dw called but DW client is disabled")
+        # no-op
 
 
 # ============================================================

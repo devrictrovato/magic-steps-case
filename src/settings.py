@@ -32,8 +32,10 @@ for directory in [DATA_DIR, ARTIFACTS_DIR, MODELS_DIR, LOGS_DIR]:
 class Settings(BaseSettings):
     """Configurações de ambiente do projeto."""
     
+    # specify absolute env file path based on project root so it works
+    # even if current working directory is 'app' when the process starts.
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -43,29 +45,25 @@ class Settings(BaseSettings):
     project_name: str = "magic_steps_mlops"
     environment: str = "development"
     
-    # AWS
-    aws_region: str = "us-east-1"
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    s3_bucket: str = "magic-steps-ml"
-    
-    # Database
-    db_host: str = "localhost"
-    db_port: int = 5432
-    db_name: str = "magic_steps_features"
-    db_user: str = "postgres"
-    db_password: str = ""
-    
-    # Redis (para Feast online store)
+    # Redis (para Feast online store e cache da API)
     redis_host: str = "localhost"
     redis_port: int = 6379
     
-    # MLflow
-    mlflow_tracking_uri: str = "http://localhost:5000"
-    mlflow_experiment_name: str = "magic_steps_experiment"
+    # MongoDB para logs de uso do modelo
+    mongo_uri: str = "mongodb://localhost:27017"
+    mongo_db: str = "magic_steps_logs"
+    
     
     # Random State
     random_state: int = 42
+
+    # MLflow (opcional, usado apenas pelo pipeline de treino)
+    mlflow_tracking_uri: str = "http://localhost:5000"
+    mlflow_experiment_name: str = "magic_steps_experiment"
+
+    # Segurança / autenticação
+    secret_key: str = Field("change_me")
+    access_token_expire_minutes: int = Field(60)
 
 
 # ============================================================

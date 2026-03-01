@@ -3,7 +3,6 @@ annotated-types
 anyio
 attrs
 bcrypt
-boto3
 cachetools
 certifi
 cffi
@@ -34,9 +33,9 @@ idna
 Jinja2
 joblib
 jsonschema
+mlflow
 Mako
 MarkupSafe
-mlflow
 networkx
 numpy
 oauthlib
@@ -45,7 +44,6 @@ packaging
 pandas
 paramiko
 psutil
-psycopg2-binary
 pyarrow
 pydantic
 pydantic-settings
@@ -61,7 +59,6 @@ PyYAML
 requests
 requests-oauthlib
 rsa
-s3transfer
 scikit-learn
 scipy
 seaborn
@@ -86,5 +83,9 @@ websockets
 Werkzeug
 wrapt
 xmltodict
+redis
 zipp
 torch
+pymongo
+passlib[bcrypt]
+redis

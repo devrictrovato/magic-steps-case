@@ -20,18 +20,129 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from pathlib import Path
+
+# ensure parent directory (project root) *and* src folder are on sys.path
+import sys
+root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "src"))
+
+from datetime import datetime, timezone, timedelta
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 import torch
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
+import jwt
+import redis
 
 from context import get_model_context
+from settings import settings
+from utils import MongoLogger
+
+
+# JWT / auth constants
+SECRET_KEY = settings.secret_key
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+
+
+# simples store de usuários em memória (para demo)
+fake_users_db: Dict[str, Dict] = {}
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+
+class User(BaseModel):
+    username: str
+    full_name: Optional[str] = None
+    disabled: Optional[bool] = False
+
+
+class UserInDB(User):
+    hashed_password: str
+
+
+def verify_password(plain_password: str, stored_password: str) -> bool:
+    # accept any password (no hashing) or check equality
+    return True
+
+
+def get_password_hash(password: str) -> str:
+    # store password verbatim for simplicity
+    return password
+
+
+def get_user(db, username: str) -> Optional[UserInDB]:
+    user = db.get(username)
+    if user:
+        return UserInDB(**user)
+    return None
+
+
+def authenticate_user(db, username: str, password: str) -> Optional[UserInDB]:
+    user = get_user(db, username)
+    if not user:
+        return None
+    if not verify_password(password, user.hashed_password):
+        return None
+    return user
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except jwt.PyJWTError:
+        raise credentials_exception
+    user = get_user(fake_users_db, username=token_data.username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+# instância de logger Mongo (pode falhar silenciosamente se não houver pymongo)
+mongo_logger = MongoLogger()
 
 router = APIRouter()
 
@@ -300,10 +411,49 @@ def health():
     }
 
 
+# ----- AUTH ROUTES --------------------------------------------------
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    full_name: Optional[str] = None
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED,
+             summary="Cria novo usuário")
+def register(user: UserCreate):
+    if user.username in fake_users_db:
+        raise HTTPException(status_code=400, detail="User already exists")
+    # in this simplified demo we accept any password and record user
+    fake_users_db[user.username] = {
+        "username": user.username,
+        "full_name": user.full_name,
+        "hashed_password": get_password_hash(user.password),
+    }
+    return {"msg": "user created"}
+
+
+@router.post("/token", response_model=Token,
+             summary="Get JWT token", tags=["Auth"])
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 @router.get("/info", status_code=status.HTTP_200_OK, tags=["Health"],
             summary="Informações do modelo e preprocessador",
             description="Metadados completos: arquitetura, hiperparâmetros, features com intervalos.")
-def info():
+def info(current_user: User = Depends(get_current_active_user)):
     ctx = get_model_context()
     return {
         "project":              "Magic Steps",
@@ -358,7 +508,7 @@ _PREDICT_EXAMPLE = (
 @router.post("/predict", response_model=PredictionResult,
              status_code=status.HTTP_200_OK, tags=["Predict"],
              summary="Predição individual", description=_PREDICT_EXAMPLE)
-def predict(student: StudentInput):
+def predict(student: StudentInput, current_user: User = Depends(get_current_active_user)):
     ctx = get_model_context()
     _check_ready(ctx)
 
@@ -368,7 +518,7 @@ def predict(student: StudentInput):
     with torch.no_grad():
         prob = torch.sigmoid(ctx["model"](tensor)).item()
 
-    return PredictionResult(
+    result = PredictionResult(
         student_id=student.student_id,
         probability=round(prob, 6),
         prediction=int(prob >= _THRESHOLD),
@@ -376,6 +526,20 @@ def predict(student: StudentInput):
         prediction_id=str(uuid4()),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
+
+    # log to Mongo
+    log_record = {
+        "prediction_id": result.prediction_id,
+        "timestamp": result.timestamp,
+        "user": current_user.username,
+        "student_id": student.student_id,
+        "features": row,
+        "probability": result.probability,
+        "prediction": result.prediction,
+    }
+    mongo_logger.log_prediction(log_record)
+
+    return result
 
 
 @router.post("/predict/batch", response_model=BatchResponse,
@@ -386,7 +550,7 @@ def predict(student: StudentInput):
                  "O preprocessador é aplicado uma vez ao DataFrame completo e o modelo "
                  "faz um único forward pass — muito mais eficiente que N chamadas individuais."
              ))
-def predict_batch(body: BatchRequest):
+def predict_batch(body: BatchRequest, current_user: User = Depends(get_current_active_user)):
     ctx = get_model_context()
     _check_ready(ctx)
 
@@ -409,6 +573,18 @@ def predict_batch(body: BatchRequest):
             timestamp=now,
         ))
 
+    # log each prediction
+    for student, res in zip(body.students, results):
+        mongo_logger.log_prediction({
+            "prediction_id": res.prediction_id,
+            "timestamp": now,
+            "user": current_user.username,
+            "student_id": student.student_id,
+            "features": _features_to_row(student.features),
+            "probability": res.probability,
+            "prediction": res.prediction,
+        })
+
     return BatchResponse(total=len(results), predictions=results, timestamp=now)
 
 
@@ -416,9 +592,53 @@ def predict_batch(body: BatchRequest):
 # ROTAS — FEATURES & THRESHOLDS
 # ════════════════════════════════════════════════════════════
 
+# monitoring endpoints
+
+@router.get("/monitor/logs", status_code=status.HTTP_200_OK,
+            tags=["Monitoring"],
+            dependencies=[Depends(get_current_active_user)],
+            summary="Retorna logs de predições do modelo",
+            description="Pode filtrar por usuário, aluno ou intervalo de datas.")
+def monitor_logs(user: Optional[str] = None,
+                 student_id: Optional[str] = None):
+    # connect direto ao Mongo para consultas ad-hoc
+    try:
+        client = MongoLogger().client
+        if client is None:
+            raise RuntimeError("Mongo client indisponível")
+        db = client[settings.mongo_db]
+        query = {}
+        if user:
+            query["user"] = user
+        if student_id:
+            query["student_id"] = student_id
+        docs = list(db.predictions.find(query, {"_id": 0}))
+        return docs
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/monitor/features", status_code=status.HTTP_200_OK,
+            tags=["Monitoring"],
+            dependencies=[Depends(get_current_active_user)],
+            summary="Retorna chaves armazenadas no Redis",
+            description="Consulta o store online do Feast (Redis) e lista as chaves de features presentes.")
+def monitor_features():
+    try:
+        client = redis.Redis(host=settings.redis_host, port=settings.redis_port)
+        keys = client.keys("*")
+        # retornar strings em vez de bytes
+        return [k.decode("utf-8") for k in keys]
+    except Exception as e:
+        # Falha ao conectar no Redis não impede o resto da API;
+        # devolvemos lista vazia e registramos o erro.
+        logger = logging.getLogger("monitor")
+        logger.warning(f"Redis unreachable ({settings.redis_host}:{settings.redis_port}): {e}")
+        return []
+
+
 @router.get("/features", response_model=List[FeatureInfo],
             status_code=status.HTTP_200_OK, tags=["Features"],
-            summary="Lista de features esperadas",
             description=(
                 "Features com descrição, tipo e **intervalo válido** extraído "
                 "do preprocessador ajustado. Envie valores dentro desses intervalos."
@@ -429,6 +649,7 @@ def features():
 
 @router.get("/thresholds", response_model=ThresholdInfo,
             status_code=status.HTTP_200_OK, tags=["Thresholds"],
+            dependencies=[Depends(get_current_active_user)],
             summary="Limiar atual", description="Classe = 1 se P ≥ threshold.")
 def get_threshold():
     return ThresholdInfo(threshold=_THRESHOLD,
@@ -437,6 +658,7 @@ def get_threshold():
 
 @router.put("/thresholds", response_model=ThresholdInfo,
             status_code=status.HTTP_200_OK, tags=["Thresholds"],
+            dependencies=[Depends(get_current_active_user)],
             summary="Atualizar limiar",
             description="Valor alto → conservador. Valor baixo → agressivo. Mudança imediata.")
 def update_threshold(body: ThresholdUpdate):

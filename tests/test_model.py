@@ -36,6 +36,10 @@ from pathlib import Path
 from typing import List
 from unittest.mock import patch
 
+# ensure src directory is on path so `import settings` resolves during tests
+root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root / "src"))
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -143,6 +147,20 @@ def _student_body(student_id: str | None = "RA-1", features: dict | None = None)
 # FIXTURES
 # ════════════════════════════════════════════════════════════
 
+
+@pytest.fixture()
+def auth_client(client):
+    """Retorna TestClient com usuário criado e token válido."""
+    # register a user
+    resp = client.post("/register", json={"username":"alice","password":"secret"})
+    assert resp.status_code == 201
+    # get token
+    resp = client.post("/token", data={"username":"alice","password":"secret"})
+    assert resp.status_code == 200
+    token = resp.json()["access_token"]
+    client.headers.update({"Authorization": f"Bearer {token}"})
+    return client
+
 @pytest.fixture()
 def simple_params() -> dict:
     """Hiperparâmetros mínimos para construir um modelo rápido."""
@@ -192,17 +210,27 @@ def client(fake_context):
     """
     TestClient da FastAPI com contexto injetado.
     Substitui get_model_context pelo fake_context.
+    Retorna também um atributo `logger` na instância para inspeção.
     """
     from fastapi.testclient import TestClient
+    from unittest.mock import MagicMock
 
     # importa app DEPOIS de preparar o mock para evitar
     # que o startup tente carregar arquivos reais
-    with patch("context.get_model_context", return_value=fake_context):
+    with patch("context.get_model_context", return_value=fake_context), \
+         patch("routes.MongoLogger") as fake_logger_class:
+        # make sure logger instance methods exist but do nothing
+        fake_logger = fake_logger_class.return_value
+        fake_logger.log_prediction = MagicMock()
+
         # routes importa get_model_context de context;
         # precisamos also do patch no módulo routes
         with patch("routes.get_model_context", return_value=fake_context):
             from app.main import app
-            yield TestClient(app, raise_server_exceptions=True)
+            client = TestClient(app, raise_server_exceptions=True)
+            # attach fake_logger to client so tests can inspect call count
+            client.mongo_logger = fake_logger
+            yield client
 
 
 # ════════════════════════════════════════════════════════════
@@ -481,13 +509,17 @@ class TestHealthEndpoint:
 class TestInfoEndpoint:
     """GET /info"""
 
-    def test_info_200(self, client):
+    def test_info_200(self, client, auth_client):
+        # public access should be forbidden
         resp = client.get("/info")
+        assert resp.status_code == 401
 
+        # authorized client works
+        resp = auth_client.get("/info")
         assert resp.status_code == 200
 
-    def test_info_campos_obrigatórios(self, client):
-        body = client.get("/info").json()
+    def test_info_campos_obrigatórios(self, client, auth_client):
+        body = auth_client.get("/info").json()
 
         assert body["project"] == "Magic Steps"
         assert body["model_class"] == "MagicStepsNet"
@@ -498,13 +530,13 @@ class TestInfoEndpoint:
         assert "features" in body
         assert "threshold" in body
 
-    def test_info_features_tem_18_items(self, client):
-        body = client.get("/info").json()
+    def test_info_features_tem_18_items(self, client, auth_client):
+        body = auth_client.get("/info").json()
 
         assert len(body["features"]) == 18
 
-    def test_info_best_params_fields(self, client):
-        params = client.get("/info").json()["best_params"]
+    def test_info_best_params_fields(self, client, auth_client):
+        params = auth_client.get("/info").json()["best_params"]
 
         assert "hidden_layers" in params
         assert "dropout" in params
@@ -517,44 +549,44 @@ class TestInfoEndpoint:
 class TestFeaturesEndpoint:
     """GET /features"""
 
-    def test_features_200(self, client):
-        resp = client.get("/features")
-
+    def test_features_200(self, client, auth_client):
+        assert client.get("/features").status_code == 401
+        resp = auth_client.get("/features")
         assert resp.status_code == 200
 
-    def test_features_quantidade(self, client):
-        body = client.get("/features").json()
+    def test_features_quantidade(self, client, auth_client):
+        body = auth_client.get("/features").json()
 
         assert len(body) == 18
 
-    def test_features_campos_presentes(self, client):
+    def test_features_campos_presentes(self, client, auth_client):
         """Cada item deve ter name, description, type e range."""
-        for feat in client.get("/features").json():
+        for feat in auth_client.get("/features").json():
             assert "name" in feat
             assert "description" in feat
             assert "type" in feat
             assert "range" in feat
 
-    def test_features_tipos_válidos(self, client):
-        tipos = {f["type"] for f in client.get("/features").json()}
+    def test_features_tipos_válidos(self, client, auth_client):
+        tipos = {f["type"] for f in auth_client.get("/features").json()}
 
         assert tipos == {"int", "float", "categorical"}
 
-    def test_features_numericas_têm_range(self, client):
+    def test_features_numericas_têm_range(self, client, auth_client):
         """Todas as numéricas devem ter range não-None."""
-        for feat in client.get("/features").json():
+        for feat in auth_client.get("/features").json():
             if feat["type"] in ("int", "float"):
                 assert feat["range"] is not None, f"{feat['name']} sem range"
 
-    def test_features_categoricas_têm_range(self, client):
+    def test_features_categoricas_têm_range(self, client, auth_client):
         """Categoricas devem ter range com ' | ' como separador."""
-        for feat in client.get("/features").json():
+        for feat in auth_client.get("/features").json():
             if feat["type"] == "categorical":
                 assert feat["range"] is not None
                 assert " | " in feat["range"]
 
-    def test_features_nomes_esperados(self, client):
-        nomes = [f["name"] for f in client.get("/features").json()]
+    def test_features_nomes_esperados(self, client, auth_client):
+        nomes = [f["name"] for f in auth_client.get("/features").json()]
         expected = [
             "fase", "idade", "ano_ingresso",
             "score_inde", "score_iaa", "score_ieg", "score_ips",
@@ -566,26 +598,26 @@ class TestFeaturesEndpoint:
 
         assert nomes == expected
 
-    def test_features_turma_range_contem_24(self, client):
+    def test_features_turma_range_contem_24(self, client, auth_client):
         """turma deve listar 24 letras."""
         turma = next(
-            f for f in client.get("/features").json() if f["name"] == "turma"
+            f for f in auth_client.get("/features").json() if f["name"] == "turma"
         )
         letras = turma["range"].split(" | ")
 
         assert len(letras) == 24
 
-    def test_features_genero_range(self, client):
+    def test_features_genero_range(self, client, auth_client):
         genero = next(
-            f for f in client.get("/features").json() if f["name"] == "genero"
+            f for f in auth_client.get("/features").json() if f["name"] == "genero"
         )
 
         assert "menina" in genero["range"]
         assert "menino" in genero["range"]
 
-    def test_features_pedra_range(self, client):
+    def test_features_pedra_range(self, client, auth_client):
         pedra = next(
-            f for f in client.get("/features").json() if f["name"] == "pedra_modal"
+            f for f in auth_client.get("/features").json() if f["name"] == "pedra_modal"
         )
 
         for p in ["ametista", "quartzo", "topázio", "ágata"]:
@@ -599,26 +631,27 @@ class TestFeaturesEndpoint:
 class TestThresholdEndpoints:
     """GET / PUT /thresholds"""
 
-    def test_get_threshold_200(self, client):
-        resp = client.get("/thresholds")
+    def test_get_threshold_200(self, client, auth_client):
+        assert client.get("/thresholds").status_code == 401
+        resp = auth_client.get("/thresholds")
 
         assert resp.status_code == 200
 
-    def test_get_threshold_campos(self, client):
-        body = client.get("/thresholds").json()
+    def test_get_threshold_campos(self, client, auth_client):
+        body = auth_client.get("/thresholds").json()
 
         assert "threshold" in body
         assert "updated_at" in body
         assert 0.0 <= body["threshold"] <= 1.0
 
-    def test_put_threshold_atualiza(self, client):
-        client.put("/thresholds", json={"threshold": 0.7})
-        body = client.get("/thresholds").json()
+    def test_put_threshold_atualiza(self, client, auth_client):
+        auth_client.put("/thresholds", json={"threshold": 0.7})
+        body = auth_client.get("/thresholds").json()
 
         assert body["threshold"] == 0.7
 
-    def test_put_threshold_resposta(self, client):
-        resp = client.put("/thresholds", json={"threshold": 0.3})
+    def test_put_threshold_resposta(self, client, auth_client):
+        resp = auth_client.put("/thresholds", json={"threshold": 0.3})
 
         assert resp.status_code == 200
         assert resp.json()["threshold"] == 0.3
@@ -650,14 +683,44 @@ class TestThresholdEndpoints:
 class TestPredictEndpoint:
     """POST /predict"""
 
-    def test_predict_200(self, client):
-        resp = client.post("/predict", json=_student_body())
+    def test_predict_200(self, client, auth_client):
+        assert client.post("/predict", json=_student_body()).status_code == 401
+        resp = auth_client.post("/predict", json=_student_body())
 
         assert resp.status_code == 200
+        # confirm logging
+        assert auth_client.mongo_logger.log_prediction.call_count == 1
+
+    def test_monitor_logs(self, client, auth_client):
+        # after a prediction we should see at least one log entry
+        auth_client.post("/predict", json=_student_body())
+        resp = auth_client.get("/monitor/logs")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+
+    def test_monitor_features(self, client, auth_client):
+        # Redis successfully returns no keys
+        with patch("routes.redis") as fake_redis:
+            fake_conn = fake_redis.Redis.return_value
+            fake_conn.keys.return_value = []
+            resp = auth_client.get("/monitor/features")
+            assert resp.status_code == 200
+            assert resp.json() == []
+
+    def test_monitor_features_redis_down(self, client, auth_client):
+        # Simulate connection error: should still return 200 with empty list
+        from redis.exceptions import ConnectionError
+        with patch("routes.redis") as fake_redis:
+            fake_redis.Redis.side_effect = ConnectionError("getaddrinfo failed")
+            resp = auth_client.get("/monitor/features")
+            assert resp.status_code == 200
+            assert resp.json() == []
 
     # ── campos da resposta ────────────────────────────────
-    def test_predict_campos_obrigatórios(self, client):
-        body = client.post("/predict", json=_student_body()).json()
+    def test_predict_campos_obrigatórios(self, client, auth_client):
+        body = auth_client.post("/predict", json=_student_body()).json()
 
         assert "student_id" in body
         assert "probability" in body
@@ -666,126 +729,128 @@ class TestPredictEndpoint:
         assert "prediction_id" in body
         assert "timestamp" in body
 
-    def test_predict_probability_range(self, client):
+    def test_predict_probability_range(self, client, auth_client):
         """Probabilidade deve estar em [0, 1]."""
-        body = client.post("/predict", json=_student_body()).json()
+        body = auth_client.post("/predict", json=_student_body()).json()
 
         assert 0.0 <= body["probability"] <= 1.0
 
-    def test_predict_prediction_binário(self, client):
-        body = client.post("/predict", json=_student_body()).json()
+    def test_predict_prediction_binário(self, client, auth_client):
+        body = auth_client.post("/predict", json=_student_body()).json()
 
         assert body["prediction"] in (0, 1)
 
-    def test_predict_confidence_válido(self, client):
-        body = client.post("/predict", json=_student_body()).json()
+    def test_predict_confidence_válido(self, client, auth_client):
+        body = auth_client.post("/predict", json=_student_body()).json()
 
         assert body["confidence"] in ("alta", "média", "baixa")
 
-    def test_predict_student_id_preservado(self, client):
-        body = client.post(
+    def test_predict_student_id_preservado(self, client, auth_client):
+        body = auth_client.post(
             "/predict", json=_student_body(student_id="TESTE-99")
         ).json()
 
         assert body["student_id"] == "TESTE-99"
 
-    def test_predict_student_id_nulo(self, client):
+    def test_predict_student_id_nulo(self, client, auth_client):
         """student_id é opcional — None deve ser aceito."""
-        body = client.post(
+        body = auth_client.post(
             "/predict", json=_student_body(student_id=None)
         ).json()
 
         assert body["student_id"] is None
 
-    def test_predict_prediction_id_é_uuid(self, client):
+    def test_predict_prediction_id_é_uuid(self, client, auth_client):
         """prediction_id deve ser um UUID válido."""
         import uuid
-        body = client.post("/predict", json=_student_body()).json()
+        body = auth_client.post("/predict", json=_student_body()).json()
 
         # não deve levantar
         uuid.UUID(body["prediction_id"])
 
-    def test_predict_timestamp_é_iso(self, client):
+    def test_predict_timestamp_é_iso(self, client, auth_client):
         """timestamp deve ser parseable como ISO-8601."""
         from datetime import datetime
-        body = client.post("/predict", json=_student_body()).json()
+        body = auth_client.post("/predict", json=_student_body()).json()
 
         datetime.fromisoformat(body["timestamp"])
 
     # ── determinismo ──────────────────────────────────────
-    def test_predict_determinismo(self, client):
+    def test_predict_determinismo(self, client, auth_client):
         """Mesmo input deve dar mesma probabilidade (modelo em eval)."""
-        p1 = client.post("/predict", json=_student_body()).json()["probability"]
-        p2 = client.post("/predict", json=_student_body()).json()["probability"]
+        p1 = auth_client.post("/predict", json=_student_body()).json()["probability"]
+        p2 = auth_client.post("/predict", json=_student_body()).json()["probability"]
 
         assert p1 == p2
 
     # ── validação de entrada ──────────────────────────────
-    def test_predict_fase_fora_range(self, client):
+    def test_predict_fase_fora_range(self, client, auth_client):
         """fase=99 deve ser rejeitado com 422."""
         feats = {**_VALID_FEATURES, "fase": 99}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_fase_negativa(self, client):
+    def test_predict_fase_negativa(self, client, auth_client):
         feats = {**_VALID_FEATURES, "fase": -1}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_idade_abaixo_min(self, client):
+    def test_predict_idade_abaixo_min(self, client, auth_client):
         feats = {**_VALID_FEATURES, "idade": 5}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_nota_cg_zero(self, client):
+    def test_predict_nota_cg_zero(self, client, auth_client):
         """nota_cg ge=1, então 0 deve ser rejeitado."""
         feats = {**_VALID_FEATURES, "nota_cg": 0}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_defasagem_abaixo_min(self, client):
+    def test_predict_defasagem_abaixo_min(self, client, auth_client):
         feats = {**_VALID_FEATURES, "defasagem": -10}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_turma_inválida(self, client):
+    def test_predict_turma_inválida(self, client, auth_client):
         """Letra não existente no enum deve dar 422."""
         feats = {**_VALID_FEATURES, "turma": "w"}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_genero_inválido(self, client):
+    def test_predict_genero_inválido(self, client, auth_client):
         feats = {**_VALID_FEATURES, "genero": "outro"}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_pedra_inválida(self, client):
+    def test_predict_pedra_inválida(self, client, auth_client):
         feats = {**_VALID_FEATURES, "pedra_modal": "diamante"}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
-    def test_predict_campo_ausente(self, client):
+    def test_predict_campo_ausente(self, client, auth_client):
         """Omitir campo obrigatório deve dar 422."""
         feats = {k: v for k, v in _VALID_FEATURES.items() if k != "fase"}
-        resp = client.post("/predict", json=_student_body(features=feats))
+        resp = auth_client.post("/predict", json=_student_body(features=feats))
 
         assert resp.status_code == 422
 
     # ── 503 sem artefatos ─────────────────────────────────
     def test_predict_503_sem_modelo(self, fake_context):
         from fastapi.testclient import TestClient
+        from app.routes import User
 
         ctx = {**fake_context, "model": None}
         with patch("context.get_model_context", return_value=ctx), \
-             patch("routes.get_model_context", return_value=ctx):
+             patch("routes.get_model_context", return_value=ctx), \
+             patch("routes.get_current_active_user", return_value=User(username="test")):
             from app.main import app
             c = TestClient(app, raise_server_exceptions=False)
             resp = c.post("/predict", json=_student_body())
@@ -794,10 +859,12 @@ class TestPredictEndpoint:
 
     def test_predict_503_sem_preprocessor(self, fake_context):
         from fastapi.testclient import TestClient
+        from app.routes import User
 
         ctx = {**fake_context, "preprocessor": None}
         with patch("context.get_model_context", return_value=ctx), \
-             patch("routes.get_model_context", return_value=ctx):
+             patch("routes.get_model_context", return_value=ctx), \
+             patch("routes.get_current_active_user", return_value=User(username="test")):
             from app.main import app
             c = TestClient(app, raise_server_exceptions=False)
             resp = c.post("/predict", json=_student_body())
@@ -806,10 +873,12 @@ class TestPredictEndpoint:
 
     def test_predict_503_sem_ambos(self, fake_context):
         from fastapi.testclient import TestClient
+        from app.routes import User
 
         ctx = {**fake_context, "model": None, "preprocessor": None}
         with patch("context.get_model_context", return_value=ctx), \
-             patch("routes.get_model_context", return_value=ctx):
+             patch("routes.get_model_context", return_value=ctx), \
+             patch("routes.get_current_active_user", return_value=User(username="test")):
             from app.main import app
             c = TestClient(app, raise_server_exceptions=False)
             resp = c.post("/predict", json=_student_body())
@@ -832,29 +901,33 @@ class TestPredictBatchEndpoint:
             ]
         }
 
-    def test_batch_200(self, client):
-        resp = client.post("/predict/batch", json=self._batch_body())
+    def test_batch_200(self, client, auth_client):
+        # unauthorized should be rejected
+        assert client.post("/predict/batch", json=self._batch_body()).status_code == 401
+        resp = auth_client.post("/predict/batch", json=self._batch_body())
 
         assert resp.status_code == 200
+        # check logging count
+        assert auth_client.mongo_logger.log_prediction.call_count == 3
 
-    def test_batch_campos_resposta(self, client):
-        body = client.post("/predict/batch", json=self._batch_body()).json()
+    def test_batch_campos_resposta(self, client, auth_client):
+        body = auth_client.post("/predict/batch", json=self._batch_body()).json()
 
         assert "total" in body
         assert "predictions" in body
         assert "timestamp" in body
 
-    def test_batch_total_correto(self, client):
+    def test_batch_total_correto(self, client, auth_client):
         n = 5
-        body = client.post(
+        body = auth_client.post(
             "/predict/batch", json=self._batch_body(n)
         ).json()
 
         assert body["total"] == n
         assert len(body["predictions"]) == n
 
-    def test_batch_cada_predição_completa(self, client):
-        body = client.post("/predict/batch", json=self._batch_body(3)).json()
+    def test_batch_cada_predição_completa(self, client, auth_client):
+        body = auth_client.post("/predict/batch", json=self._batch_body(3)).json()
 
         for pred in body["predictions"]:
             assert "student_id" in pred
@@ -863,32 +936,32 @@ class TestPredictBatchEndpoint:
             assert "confidence" in pred
             assert "prediction_id" in pred
 
-    def test_batch_student_ids_preservados(self, client):
-        body = client.post("/predict/batch", json=self._batch_body(3)).json()
+    def test_batch_student_ids_preservados(self, client, auth_client):
+        body = auth_client.post("/predict/batch", json=self._batch_body(3)).json()
         ids = [p["student_id"] for p in body["predictions"]]
 
         assert ids == ["RA-0", "RA-1", "RA-2"]
 
-    def test_batch_probabilidades_válidas(self, client):
-        body = client.post("/predict/batch", json=self._batch_body(4)).json()
+    def test_batch_probabilidades_válidas(self, client, auth_client):
+        body = auth_client.post("/predict/batch", json=self._batch_body(4)).json()
 
         for pred in body["predictions"]:
             assert 0.0 <= pred["probability"] <= 1.0
 
     # ── consistência com predict individual ───────────────
-    def test_batch_consistente_com_individual(self, client):
+    def test_batch_consistente_com_individual(self, client, auth_client):
         """Mesmo input via batch e individual deve dar mesma probabilidade."""
-        single = client.post("/predict", json=_student_body(student_id="X")).json()
+        single = auth_client.post("/predict", json=_student_body(student_id="X")).json()
 
         batch_body = {"students": [_student_body(student_id="X")]}
-        batch = client.post("/predict/batch", json=batch_body).json()
+        batch = auth_client.post("/predict/batch", json=batch_body).json()
 
         assert single["probability"] == batch["predictions"][0]["probability"]
 
     # ── determinismo ──────────────────────────────────────
-    def test_batch_determinismo(self, client):
-        b1 = client.post("/predict/batch", json=self._batch_body(2)).json()
-        b2 = client.post("/predict/batch", json=self._batch_body(2)).json()
+    def test_batch_determinismo(self, client, auth_client):
+        b1 = auth_client.post("/predict/batch", json=self._batch_body(2)).json()
+        b2 = auth_client.post("/predict/batch", json=self._batch_body(2)).json()
 
         probs1 = [p["probability"] for p in b1["predictions"]]
         probs2 = [p["probability"] for p in b2["predictions"]]
@@ -896,12 +969,12 @@ class TestPredictBatchEndpoint:
         assert probs1 == probs2
 
     # ── limites de tamanho ────────────────────────────────
-    def test_batch_vazio_422(self, client):
-        resp = client.post("/predict/batch", json={"students": []})
+    def test_batch_vazio_422(self, client, auth_client):
+        resp = auth_client.post("/predict/batch", json={"students": []})
 
         assert resp.status_code == 422
 
-    def test_batch_501_alunos_422(self, client):
+    def test_batch_501_alunos_422(self, client, auth_client):
         """Mais que 500 deve ser rejeitado."""
         body = {"students": [_student_body(student_id=f"R-{i}") for i in range(501)]}
         resp = client.post("/predict/batch", json=body)

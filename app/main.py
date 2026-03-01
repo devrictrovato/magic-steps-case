@@ -17,9 +17,15 @@
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
+
+# make project root and src directory importable for top-level modules
+import sys
+root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "src"))
 from typing import Dict, List, Any, Optional
+
 
 import torch
 import torch.nn as nn
