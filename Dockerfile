@@ -27,7 +27,8 @@ RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # PYTHONPATH para imports planos
-ENV PYTHONPATH=/app/app
+# include both /app (project root) and /app/src so modules like `settings` can be imported
+ENV PYTHONPATH=/app:/app/src
 
 # Variáveis de ambiente (usar serviços externos no Render)
 ENV REDIS_HOST=redis
@@ -39,6 +40,8 @@ ENV MONGO_DB=magic_steps_logs
 COPY app/context.py app/
 COPY app/main.py    app/
 COPY app/routes.py  app/
+# incluir código auxiliar que vive em src
+COPY src/ src/
 
 # Artefatos do modelo
 COPY app/model/model_magic_steps_dl.pt app/model/
