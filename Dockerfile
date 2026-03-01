@@ -27,8 +27,8 @@ RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # PYTHONPATH para imports planos
-# include both /app (project root) and /app/src so modules like `settings` can be imported
-ENV PYTHONPATH=/app:/app/src
+# include project root, the app package, and src helpers so modules can be imported
+ENV PYTHONPATH=/app/app:/app:/app/src
 
 # Variáveis de ambiente (usar serviços externos no Render)
 ENV REDIS_HOST=redis
