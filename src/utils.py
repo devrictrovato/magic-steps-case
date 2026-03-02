@@ -212,7 +212,16 @@ class MongoLogger:
             self.db = None
         else:
             try:
-                self.client = _PymongoClient(self.uri)
+                self.client = _PymongoClient(
+                    self.uri,
+                    serverSelectionTimeoutMS=5_000,
+                    connectTimeoutMS=5_000,
+                    socketTimeoutMS=10_000,
+                    tls=True,
+                    tlsAllowInvalidCertificates=True,
+                )
+                # Valida conectividade imediatamente
+                self.client.admin.command("ping")
                 self.db = self.client[self.db_name]
             except Exception as e:
                 self.logger.error(f"Erro ao conectar MongoDB: {e}")

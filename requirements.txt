@@ -89,3 +89,4 @@ torch
 pymongo
 passlib[bcrypt]
 redis
+logging

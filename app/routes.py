@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 # ensure parent directory (project root) *and* src folder are on sys.path
@@ -45,6 +46,8 @@ import redis
 from context import get_model_context
 from settings import settings
 from utils import MongoLogger
+
+logger = logging.getLogger("magic_steps_routes")
 
 
 # JWT / auth constants
@@ -625,14 +628,18 @@ def monitor_logs(user: Optional[str] = None,
             description="Consulta o store online do Feast (Redis) e lista as chaves de features presentes.")
 def monitor_features():
     try:
-        client = redis.Redis(host=settings.redis_host, port=settings.redis_port)
+        client = redis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            socket_connect_timeout=3,
+            socket_timeout=3,
+        )
         keys = client.keys("*")
         # retornar strings em vez de bytes
         return [k.decode("utf-8") for k in keys]
     except Exception as e:
         # Falha ao conectar no Redis não impede o resto da API;
         # devolvemos lista vazia e registramos o erro.
-        logger = logging.getLogger("monitor")
         logger.warning(f"Redis unreachable ({settings.redis_host}:{settings.redis_port}): {e}")
         return []
 
