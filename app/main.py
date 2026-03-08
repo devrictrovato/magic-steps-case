@@ -213,8 +213,6 @@ app.add_middleware(
 
 # ── rotas ─────────────────────────────────────────────────────────────────────
 from .routes import router as prediction_router  # noqa: E402
-from .root_route import router as root_router    # noqa: E402
-app.include_router(root_router)
 app.include_router(prediction_router)
 
 
