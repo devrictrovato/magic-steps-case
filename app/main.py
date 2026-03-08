@@ -45,8 +45,8 @@ MODEL_PATH        = BASE_DIR / "app/model" / "model_magic_steps_dl.pt"
 PREPROCESSOR_PATH = BASE_DIR / "out" / "preprocessor.joblib"
 
 # ── contexto global ───────────────────────────────────────────────────────────
-from context import DEVICE, _MODEL_CONTEXT, get_model_context  # noqa: F401
-from db import ensure_schema
+from .context import DEVICE, _MODEL_CONTEXT, get_model_context
+from src.db import ensure_schema
 
 
 # ════════════════════════════════════════════════════════════════════════════════
