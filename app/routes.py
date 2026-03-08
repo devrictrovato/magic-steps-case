@@ -1,29 +1,29 @@
-# routes.py
+# routes.py  v2.1
 # ============================================================
-# Rotas da API Magic Steps — predição de atingimento do PV
+# Rotas da API Magic Steps
 # ============================================================
 #
 # Grupo          | Rotas
-# ───────────────|─────────────────────────────────────────────
+# ───────────────|──────────────────────────────────────────────
 # Health         | GET  /health
+# Auth           | POST /register  |  POST /token
 # Info           | GET  /info
 # Predict        | POST /predict          (1 aluno)
 #                | POST /predict/batch    (até 500 alunos)
-# Features       | GET  /features         (schema + intervalos)
-# Thresholds     | GET  /thresholds       (limiar atual)
-#                | PUT  /thresholds       (atualizar limiar)
-# ============================================================
-#
-# v2 — o cliente envia valores REAIS.
-# A API aplica preprocessor.joblib internamente antes do modelo.
+# Features       | GET  /features
+# Thresholds     | GET  /thresholds  |  PUT /thresholds
+# Monitoring     | GET  /monitor/logs
+#                | GET  /monitor/drift
+#                | GET  /monitor/runs
+#                | GET  /monitor/events
 # ============================================================
 
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
-# ensure parent directory (project root) *and* src folder are on sys.path
 import sys
 root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root))
@@ -31,34 +31,46 @@ sys.path.insert(0, str(root / "src"))
 
 from datetime import datetime, timezone, timedelta
 from enum import Enum
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 import torch
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 import jwt
-import redis
 
 from context import get_model_context
 from settings import settings
-from utils import MongoLogger
+from utils import PostgresLogger
+from db import (
+    ensure_schema,
+    log_prediction as db_log_prediction,
+    query_predictions,
+    get_drift_summary,
+    list_model_runs,
+    query_monitoring_logs,
+    log_monitoring_event,
+)
 
 logger = logging.getLogger("magic_steps_routes")
 
+try:
+    ensure_schema(settings.database_url)
+except Exception as _e:
+    logger.warning("Não foi possível inicializar schema PostgreSQL: %s", _e)
 
-# JWT / auth constants
+
+# ============================================================
+# AUTH
+# ============================================================
+
 SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
-
-
-# simples store de usuários em memória (para demo)
 fake_users_db: Dict[str, Dict] = {}
 
 
@@ -81,41 +93,25 @@ class UserInDB(User):
     hashed_password: str
 
 
-def verify_password(plain_password: str, stored_password: str) -> bool:
-    # accept any password (no hashing) or check equality
-    return True
-
-
 def get_password_hash(password: str) -> str:
-    # store password verbatim for simplicity
     return password
 
 
 def get_user(db, username: str) -> Optional[UserInDB]:
     user = db.get(username)
-    if user:
-        return UserInDB(**user)
-    return None
+    return UserInDB(**user) if user else None
 
 
 def authenticate_user(db, username: str, password: str) -> Optional[UserInDB]:
     user = get_user(db, username)
-    if not user:
-        return None
-    if not verify_password(password, user.hashed_password):
-        return None
-    return user
+    return user if user else None
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
@@ -129,10 +125,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
     except jwt.PyJWTError:
         raise credentials_exception
-    user = get_user(fake_users_db, username=token_data.username)
+    user = get_user(fake_users_db, username=username)
     if user is None:
         raise credentials_exception
     return user
@@ -144,18 +139,15 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
     return current_user
 
 
-# Rótulos das classes ternárias de defasagem
+# ============================================================
+# RÓTULOS E ENUMS
+# ============================================================
+
 _DEFASAGEM_LABELS: Dict[int, str] = {0: "atraso", 1: "neutro", 2: "avanço"}
 
-# instância de logger Mongo (pode falhar silenciosamente se não houver pymongo)
-mongo_logger = MongoLogger()
+pg_logger = PostgresLogger()
+router    = APIRouter()
 
-router = APIRouter()
-
-
-# ════════════════════════════════════════════════════════════
-# ENUMS  — valores exatos que o OrdinalEncoder conhece
-# ════════════════════════════════════════════════════════════
 
 class TurmaEnum(str, Enum):
     a="a"; b="b"; c="c"; d="d"; e="e"; f="f"
@@ -163,9 +155,11 @@ class TurmaEnum(str, Enum):
     m="m"; n="n"; o="o"; p="p"; q="q"; r="r"
     s="s"; t="t"; u="u"; v="v"; y="y"; z="z"
 
+
 class GeneroEnum(str, Enum):
     menina = "menina"
     menino = "menino"
+
 
 class PedraEnum(str, Enum):
     ametista = "ametista"
@@ -174,78 +168,51 @@ class PedraEnum(str, Enum):
     agata    = "ágata"
 
 
-# ════════════════════════════════════════════════════════════
-# ESQUEMAS DE ENTRADA  (valores humanos / originais da base)
-# ════════════════════════════════════════════════════════════
+# ============================================================
+# ESQUEMAS DE ENTRADA / SAÍDA
+# ============================================================
 
 class StudentFeatures(BaseModel):
     """
     Dados brutos de um aluno — exatamente como saem da planilha.
-
-    Intervalos extraídos do preprocessor.joblib ajustado nos dados
-    de treinamento (860 alunos, BASE DE DADOS PEDE 2024).
-
-    Nota: ``defasagem`` não é feature — é a variável-alvo predita pelo modelo.
+    O preprocessamento (MinMaxScaler + OrdinalEncoder) e o
+    feature engineering são aplicados internamente pela API.
     """
-
-    # ── numéricas ─────────────────────────────────────────
-    fase:           int   = Field(..., ge=0,     le=7,
-                                  description="Fase educacional (0 a 7)")
-    ano_ingresso:   int   = Field(..., ge=2016,  le=2022,
-                                  description="Ano de ingresso no programa")
-    score_inde:     float = Field(..., ge=3.0,   le=9.5,
-                                  description="INDE 22 — Índice de Desenvolvimento Educacional")
-    score_iaa:      float = Field(..., ge=0.0,   le=10.0,
-                                  description="IAA — Índice de Aprendizagem Ativa")
-    score_ieg:      float = Field(..., ge=0.0,   le=10.0,
-                                  description="IEG — Índice de Engajamento")
-    score_ips:      float = Field(..., ge=2.5,   le=10.0,
-                                  description="IPS — Índice de Progresso Social")
-    score_ida:      float = Field(..., ge=0.0,   le=9.9,
-                                  description="IDA — Índice de Desempenho Acadêmico")
-    score_ipv:      float = Field(..., ge=2.5,   le=10.0,
-                                  description="IPV — Índice de Progresso de Valor")
-    score_ian:      float = Field(..., ge=2.5,   le=10.0,
-                                  description="IAN — Índice de Atingimento das Necessidades")
-    nota_cg:        int   = Field(..., ge=1,     le=862,
-                                  description="Caderneta Global (pontuação acumulada)")
-    nota_cf:        int   = Field(..., ge=1,     le=192,
-                                  description="Caderneta de Formação")
-    nota_ct:        int   = Field(..., ge=1,     le=18,
-                                  description="Caderneta de Tradição")
-    num_avaliacoes: int   = Field(..., ge=2,     le=4,
-                                  description="Número de avaliações realizadas")
-    # ── categóricas ───────────────────────────────────────
-    turma:       TurmaEnum  = Field(..., description="Letra da turma (minúscula)")
-    genero:      GeneroEnum = Field(..., description="Gênero do aluno")
-    pedra_modal: PedraEnum  = Field(..., description="Pedra modal (melhor classificação nos 3 anos)")
+    fase:           int   = Field(..., ge=0,    le=7,    description="Fase educacional (0–7)")
+    ano_ingresso:   int   = Field(..., ge=2016, le=2022, description="Ano de ingresso no programa")
+    score_inde:     float = Field(..., ge=3.0,  le=9.5,  description="INDE 22")
+    score_iaa:      float = Field(..., ge=0.0,  le=10.0, description="IAA")
+    score_ieg:      float = Field(..., ge=0.0,  le=10.0, description="IEG")
+    score_ips:      float = Field(..., ge=2.5,  le=10.0, description="IPS")
+    score_ida:      float = Field(..., ge=0.0,  le=9.9,  description="IDA")
+    score_ipv:      float = Field(..., ge=2.5,  le=10.0, description="IPV")
+    score_ian:      float = Field(..., ge=2.5,  le=10.0, description="IAN")
+    nota_cg:        int   = Field(..., ge=1,    le=862,  description="Caderneta Global")
+    nota_cf:        int   = Field(..., ge=1,    le=192,  description="Caderneta de Formação")
+    nota_ct:        int   = Field(..., ge=1,    le=18,   description="Caderneta de Tradição")
+    num_avaliacoes: int   = Field(..., ge=2,    le=4,    description="Nº de avaliações")
+    turma:          TurmaEnum
+    genero:         GeneroEnum
+    pedra_modal:    PedraEnum
 
 
 class StudentInput(BaseModel):
-    """Envelope com ID opcional + features."""
-    student_id: Optional[str]   = Field(None, description="Identificador do aluno (opcional)")
+    student_id: Optional[str] = None
     features:   StudentFeatures
 
 
-# ════════════════════════════════════════════════════════════
-# ESQUEMAS DE RESPOSTA
-# ════════════════════════════════════════════════════════════
-
 class PredictionResult(BaseModel):
-    student_id:         Optional[str]
-    defasagem_classe:   int   = Field(..., description="Classe predita: 0=atraso, 1=neutro, 2=avanço")
-    defasagem_label:    str   = Field(..., description="Rótulo da classe: atraso / neutro / avanço")
-    probabilities:      Dict[str, float] = Field(..., description="Probabilidade por classe (atraso/neutro/avanço)")
-    confidence:         str   = Field(..., description="alta / média / baixa")
-    prediction_id:      str   = Field(..., description="UUID da inferência")
-    timestamp:          str   = Field(..., description="Timestamp ISO-8601")
+    student_id:       Optional[str]
+    defasagem_classe: int
+    defasagem_label:  str
+    probabilities:    Dict[str, float]
+    confidence:       str
+    prediction_id:    str
+    timestamp:        str
 
 
 class BatchRequest(BaseModel):
-    students: List[StudentInput] = Field(
-        ..., min_length=1, max_length=500,
-        description="Lista de até 500 alunos",
-    )
+    students: List[StudentInput] = Field(..., min_length=1, max_length=500)
 
 
 class BatchResponse(BaseModel):
@@ -257,7 +224,7 @@ class BatchResponse(BaseModel):
 class FeatureInfo(BaseModel):
     name:        str
     description: str
-    type:        str                      # int | float | categorical
+    type:        str
     range:       Optional[str] = None
 
 
@@ -267,164 +234,202 @@ class ThresholdInfo(BaseModel):
 
 
 class ThresholdUpdate(BaseModel):
-    threshold: float = Field(..., ge=0.0, le=1.0,
-                             description="Novo limiar de classificação")
+    threshold: float = Field(..., ge=0.0, le=1.0)
 
 
-# ════════════════════════════════════════════════════════════
-# HELPERS
-# ════════════════════════════════════════════════════════════
+class UserCreate(BaseModel):
+    username:  str
+    password:  str
+    full_name: Optional[str] = None
 
-# Colunas na ordem que o ColumnTransformer recebe.
-_INPUT_COLUMNS = [
+
+# ============================================================
+# COLUNAS BASE (entrada do preprocessador)
+# ============================================================
+
+_BASE_COLUMNS = [
     "fase", "ano_ingresso",
     "score_inde", "score_iaa", "score_ieg", "score_ips",
     "score_ida", "score_ipv", "score_ian",
-    "nota_cg", "nota_cf", "nota_ct",
-    "num_avaliacoes",
+    "nota_cg", "nota_cf", "nota_ct", "num_avaliacoes",
     "turma", "genero", "pedra_modal",
 ]
 
-# Descrições estáticas para /features e /info
 _FEATURE_META = {
-    "fase":           ("int",   "Fase educacional do aluno"),
-    "ano_ingresso":   ("int",   "Ano de ingresso no programa"),
-    "score_inde":     ("float", "INDE — Índice de Desenvolvimento Educacional"),
-    "score_iaa":      ("float", "IAA  — Índice de Aprendizagem Ativa"),
-    "score_ieg":      ("float", "IEG  — Índice de Engajamento"),
-    "score_ips":      ("float", "IPS  — Índice de Progresso Social"),
-    "score_ida":      ("float", "IDA  — Índice de Desempenho Acadêmico"),
-    "score_ipv":      ("float", "IPV  — Índice de Progresso de Valor"),
-    "score_ian":      ("float", "IAN  — Índice de Atingimento das Necessidades"),
-    "nota_cg":        ("int",   "Caderneta Global (pontuação acumulada)"),
-    "nota_cf":        ("int",   "Caderneta de Formação"),
-    "nota_ct":        ("int",   "Caderneta de Tradição"),
-    "num_avaliacoes": ("int",   "Número de avaliações realizadas"),
+    "fase":           ("int",         "Fase educacional do aluno"),
+    "ano_ingresso":   ("int",         "Ano de ingresso no programa"),
+    "score_inde":     ("float",       "INDE — Índice de Desenvolvimento Educacional"),
+    "score_iaa":      ("float",       "IAA  — Índice de Aprendizagem Ativa"),
+    "score_ieg":      ("float",       "IEG  — Índice de Engajamento"),
+    "score_ips":      ("float",       "IPS  — Índice de Progresso Social"),
+    "score_ida":      ("float",       "IDA  — Índice de Desempenho Acadêmico"),
+    "score_ipv":      ("float",       "IPV  — Índice de Progresso de Valor"),
+    "score_ian":      ("float",       "IAN  — Índice de Atingimento das Necessidades"),
+    "nota_cg":        ("int",         "Caderneta Global"),
+    "nota_cf":        ("int",         "Caderneta de Formação"),
+    "nota_ct":        ("int",         "Caderneta de Tradição"),
+    "num_avaliacoes": ("int",         "Número de avaliações realizadas"),
     "turma":          ("categorical", "Letra da turma"),
     "genero":         ("categorical", "Gênero do aluno"),
-    "pedra_modal":    ("categorical", "Pedra modal (melhor classificação nos 3 anos)"),
+    "pedra_modal":    ("categorical", "Pedra modal"),
 }
 
 
+# ============================================================
+# HELPERS
+# ============================================================
+
 def _confidence_label(max_prob: float) -> str:
-    """Converte a probabilidade máxima da classe predita em rótulo de confiança."""
-    if max_prob >= 0.60:
-        return "alta"
-    if max_prob >= 0.40:
-        return "média"
+    if max_prob >= 0.60: return "alta"
+    if max_prob >= 0.40: return "média"
     return "baixa"
 
 
 def _check_ready(ctx: dict) -> None:
-    """503 se modelo ou preprocessador não estiverem carregados."""
     missing = []
-    if ctx["model"] is None:
-        missing.append("modelo (model_magic_steps_dl.pt)")
-    if ctx["preprocessor"] is None:
-        missing.append("preprocessador (preprocessor.joblib)")
+    if ctx["model"]        is None: missing.append("modelo")
+    if ctx["preprocessor"] is None: missing.append("preprocessador")
     if missing:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Artefatos não carregados: {', '.join(missing)}. "
-                   "Verifique se os arquivos existem em out/.",
+            detail=f"Artefatos não carregados: {', '.join(missing)}.",
         )
 
 
 def _features_to_row(features: StudentFeatures) -> dict:
-    """Pydantic → dict com nomes de coluna do preprocessador."""
     row = {}
-    for col in _INPUT_COLUMNS:
+    for col in _BASE_COLUMNS:
         val = getattr(features, col)
-        # enums → string do valor
-        if isinstance(val, Enum):
-            val = val.value
-        row[col] = val
+        row[col] = val.value if isinstance(val, Enum) else val
     return row
+
+
+def _apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reproduz exatamente as mesmas transformações do FeatureEngineer,
+    adicionando as features derivadas usadas no treinamento.
+    """
+    df = df.copy()
+
+    # ── features agregadas ─────────────────────────────────────────────────
+    score_cols = ["score_inde","score_iaa","score_ieg","score_ips",
+                  "score_ida","score_ipv","score_ian"]
+    df["score_medio"] = df[[c for c in score_cols if c in df.columns]].mean(axis=1)
+
+    nota_cols = ["nota_cg", "nota_cf", "nota_ct"]
+    df["nota_media"] = df[[c for c in nota_cols if c in df.columns]].mean(axis=1)
+
+    # ── razão ─────────────────────────────────────────────────────────────
+    df["ratio_aval_fase"] = df["num_avaliacoes"] / (df["fase"] + 1)
+
+    # ── polinomiais ────────────────────────────────────────────────────────
+    df["score_inde_squared"]     = df["score_inde"]     ** 2
+    df["num_avaliacoes_squared"] = df["num_avaliacoes"] ** 2
+
+    # ── interações ────────────────────────────────────────────────────────
+    df["inde_x_fase"] = df["score_inde"]     * df["fase"]
+    df["aval_x_fase"] = df["num_avaliacoes"] * df["fase"]
+
+    return df
 
 
 def _preprocess_and_tensorize(rows: List[dict], ctx: dict) -> torch.Tensor:
     """
-    DataFrame com valores reais
-      → preprocessor.transform()   (MinMaxScaler + OrdinalEncoder)
-      → tensor float32 no device do modelo
+    Pipeline de inferência:
+      1. Monta DataFrame com colunas base
+      2. Se o modelo foi treinado com feature engineering, aplica FE
+      3. Separa numéricas vs categóricas conforme o preprocessador
+      4. Aplica ColumnTransformer (MinMaxScaler + OrdinalEncoder)
+      5. Retorna tensor float32 no device correto
     """
-    df   = pd.DataFrame(rows, columns=_INPUT_COLUMNS)
-    arr  = ctx["preprocessor"].transform(df).astype(np.float32)
+    pre = ctx["preprocessor"]
+
+    # ── colunas que o preprocessador conhece ──────────────────────────────
+    num_cols = list(pre.transformers_[0][2])   # MinMaxScaler
+    cat_cols = list(pre.transformers_[1][2])   # OrdinalEncoder
+    preprocessor_cols = num_cols + cat_cols    # ordem exata esperada
+
+    # ── montar DataFrame base ──────────────────────────────────────────────
+    df = pd.DataFrame(rows, columns=_BASE_COLUMNS)
+
+    # ── aplicar feature engineering se necessário ─────────────────────────
+    uses_fe = ctx.get("uses_feature_engineering", False)
+    if uses_fe:
+        df = _apply_feature_engineering(df)
+
+    # ── selecionar apenas as colunas que o preprocessador conhece ─────────
+    # (garante ordem correta e ignora colunas extras não vistas no treino)
+    missing = [c for c in preprocessor_cols if c not in df.columns]
+    if missing:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Colunas ausentes após feature engineering: {missing}. "
+                "Verifique se o preprocessador foi salvo com o mesmo pipeline de FE."
+            ),
+        )
+
+    df_input = df[preprocessor_cols]
+
+    # ── transformar ───────────────────────────────────────────────────────
+    arr = pre.transform(df_input).astype(np.float32)
     return torch.tensor(arr, dtype=torch.float32).to(ctx["device"])
 
 
 def _build_feature_info(ctx: dict) -> List[dict]:
-    """
-    Monta lista de FeatureInfo extraindo min/max do MinMaxScaler
-    e categorias do OrdinalEncoder ao vivo do preprocessador.
-    """
     pre = ctx.get("preprocessor")
-
     num_meta, cat_meta = {}, {}
     if pre is not None:
         num_trans = pre.transformers_[0][1]
         num_cols  = pre.transformers_[0][2]
         cat_trans = pre.transformers_[1][1]
         cat_cols  = pre.transformers_[1][2]
-
-        num_meta = {
-            col: (float(mn), float(mx))
-            for col, mn, mx in zip(num_cols, num_trans.data_min_, num_trans.data_max_)
-        }
-        cat_meta = {
-            col: cats.tolist()
-            for col, cats in zip(cat_cols, cat_trans.categories_)
-        }
+        num_meta = {col: (float(mn), float(mx)) for col, mn, mx in
+                    zip(num_cols, num_trans.data_min_, num_trans.data_max_)}
+        cat_meta = {col: cats.tolist() for col, cats in
+                    zip(cat_cols, cat_trans.categories_)}
 
     result = []
-    for col in _INPUT_COLUMNS:
+    for col in _BASE_COLUMNS:
         dtype, desc = _FEATURE_META[col]
-
         if col in num_meta:
             mn, mx = num_meta[col]
-            rang = f"{int(mn)} – {int(mx)}" if dtype == "int" else f"{mn} – {mx}"
+            rang = f"{int(mn)} – {int(mx)}" if dtype == "int" else f"{mn:.2f} – {mx:.2f}"
         elif col in cat_meta:
             rang = " | ".join(cat_meta[col])
         else:
             rang = None
-
         result.append({"name": col, "description": desc, "type": dtype, "range": rang})
-
     return result
 
 
-# ════════════════════════════════════════════════════════════
-# ROTAS — HEALTH & INFO
-# ════════════════════════════════════════════════════════════
+def _serialize(record: dict) -> dict:
+    import json
+    return json.loads(json.dumps(record, default=str))
 
-@router.get("/health", status_code=status.HTTP_200_OK, tags=["Health"],
-            summary="Health-check",
-            description="Verifica se a API, o modelo e o preprocessador estão operacionais.")
+
+# ============================================================
+# HEALTH & AUTH
+# ============================================================
+
+@router.get("/health", tags=["Health"])
 def health():
     ctx = get_model_context()
     return {
-        "status":               "ok",
-        "model_loaded":         ctx["model"] is not None,
-        "preprocessor_loaded":  ctx["preprocessor"] is not None,
-        "device":               str(ctx["device"]),
-        "timestamp":            datetime.now(timezone.utc).isoformat(),
+        "status":              "ok",
+        "model_loaded":        ctx["model"] is not None,
+        "preprocessor_loaded": ctx["preprocessor"] is not None,
+        "input_dim":           ctx.get("input_dim"),
+        "uses_feature_engineering": ctx.get("uses_feature_engineering"),
+        "device":              str(ctx["device"]),
+        "timestamp":           datetime.now(timezone.utc).isoformat(),
     }
 
 
-# ----- AUTH ROUTES --------------------------------------------------
-
-class UserCreate(BaseModel):
-    username: str
-    password: str
-    full_name: Optional[str] = None
-
-
-@router.post("/register", status_code=status.HTTP_201_CREATED,
-             summary="Cria novo usuário")
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(user: UserCreate):
     if user.username in fake_users_db:
         raise HTTPException(status_code=400, detail="User already exists")
-    # in this simplified demo we accept any password and record user
     fake_users_db[user.username] = {
         "username": user.username,
         "full_name": user.full_name,
@@ -433,8 +438,7 @@ def register(user: UserCreate):
     return {"msg": "user created"}
 
 
-@router.post("/token", response_model=Token,
-             summary="Get JWT token", tags=["Auth"])
+@router.post("/token", response_model=Token, tags=["Auth"])
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     user = authenticate_user(fake_users_db, form_data.username, form_data.password)
     if not user:
@@ -443,72 +447,38 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": user.username},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/info", status_code=status.HTTP_200_OK, tags=["Health"],
-            summary="Informações do modelo e preprocessador",
-            description="Metadados completos: arquitetura, hiperparâmetros, features com intervalos.")
-def info(current_user: User = Depends(get_current_active_user)):
+@router.get("/info", tags=["Health"],
+            dependencies=[Depends(get_current_active_user)])
+def info():
     ctx = get_model_context()
     return {
-        "project":              "Magic Steps",
-        "model_class":          "MagicStepsNet",
-        "input_dim":            ctx.get("input_dim"),
-        "best_params":          ctx.get("best_params"),
-        "device":               str(ctx["device"]),
-        "preprocessor_loaded":  ctx["preprocessor"] is not None,
-        "n_features":           len(_INPUT_COLUMNS),
-        # "threshold":            _THRESHOLD,
-        "features":             _build_feature_info(ctx),
+        "project":             "Magic Steps",
+        "model_class":         "MagicStepsNet",
+        "input_dim":           ctx.get("input_dim"),
+        "num_classes":         ctx.get("num_classes"),
+        "best_params":         ctx.get("best_params"),
+        "device":              str(ctx["device"]),
+        "uses_feature_engineering": ctx.get("uses_feature_engineering"),
+        "preprocessor_loaded": ctx["preprocessor"] is not None,
+        "n_base_features":     len(_BASE_COLUMNS),
+        "features":            _build_feature_info(ctx),
     }
 
 
-# ════════════════════════════════════════════════════════════
-# ROTAS — PREDICT
-# ════════════════════════════════════════════════════════════
+# ============================================================
+# PREDICT
+# ============================================================
 
-_PREDICT_EXAMPLE = (
-    "Recebe os dados **reais** de um único aluno e retorna a predição.\n\n"
-    "A API aplica o preprocessador (MinMaxScaler + OrdinalEncoder) "
-    "internamente — **não é necessário normalizar**.\n\n"
-    "Exemplo:\n"
-    "```json\n"
-    '{\n'
-    '  "student_id": "RA-42",\n'
-    '  "features": {\n'
-    '    "fase": 2,\n'
-    '    "idade": 12,\n'
-    '    "ano_ingresso": 2021,\n'
-    '    "score_inde": 7.5,\n'
-    '    "score_iaa": 8.5,\n'
-    '    "score_ieg": 8.0,\n'
-    '    "score_ips": 7.0,\n'
-    '    "score_ida": 6.5,\n'
-    '    "score_ipv": 7.8,\n'
-    '    "score_ian": 5.0,\n'
-    '    "nota_cg": 400,\n'
-    '    "nota_cf": 70,\n'
-    '    "nota_ct": 6,\n'
-    '    "num_avaliacoes": 3,\n'
-    '    "defasagem": -1,\n'
-    '    "turma": "a",\n'
-    '    "genero": "menina",\n'
-    '    "pedra_modal": "ametista"\n'
-    '  }\n'
-    '}\n'
-    "```"
-)
-
-
-@router.post("/predict", response_model=PredictionResult,
-             status_code=status.HTTP_200_OK, tags=["Predict"],
-             summary="Predição individual", description=_PREDICT_EXAMPLE)
-def predict(student: StudentInput, current_user: User = Depends(get_current_active_user)):
+@router.post("/predict", response_model=PredictionResult, tags=["Predict"])
+def predict(student: StudentInput,
+            current_user: User = Depends(get_current_active_user)):
     ctx = get_model_context()
     _check_ready(ctx)
 
@@ -516,8 +486,8 @@ def predict(student: StudentInput, current_user: User = Depends(get_current_acti
     tensor = _preprocess_and_tensorize([row], ctx)
 
     with torch.no_grad():
-        logits = ctx["model"](tensor)                          # (1, C)
-        probs  = torch.softmax(logits, dim=1).cpu().numpy()[0] # (C,)
+        logits = ctx["model"](tensor)                           # (1, C)
+        probs  = torch.softmax(logits, dim=1).cpu().numpy()[0]  # (C,)
 
     pred_idx  = int(np.argmax(probs))
     label     = _DEFASAGEM_LABELS[pred_idx]
@@ -534,31 +504,27 @@ def predict(student: StudentInput, current_user: User = Depends(get_current_acti
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
-    # log to Mongo
-    log_record = {
-        "prediction_id": result.prediction_id,
-        "timestamp": result.timestamp,
-        "user": current_user.username,
-        "student_id": student.student_id,
-        "features": row,
-        "defasagem_classe": result.defasagem_classe,
-        "defasagem_label": result.defasagem_label,
-        "probabilities": result.probabilities,
-    }
-    mongo_logger.log_prediction(log_record)
+    try:
+        db_log_prediction(_serialize({
+            "prediction_id":    result.prediction_id,
+            "timestamp":        result.timestamp,
+            "user":             current_user.username,
+            "student_id":       student.student_id,
+            "features":         row,
+            "defasagem_classe": result.defasagem_classe,
+            "defasagem_label":  result.defasagem_label,
+            "probabilities":    result.probabilities,
+            "confidence":       result.confidence,
+        }), settings.database_url)
+    except Exception as e:
+        logger.warning("Não foi possível gravar predição no PostgreSQL: %s", e)
 
     return result
 
 
-@router.post("/predict/batch", response_model=BatchResponse,
-             status_code=status.HTTP_200_OK, tags=["Predict"],
-             summary="Predição em lote",
-             description=(
-                 "Até **500 alunos** com valores reais.\n\n"
-                 "O preprocessador é aplicado uma vez ao DataFrame completo e o modelo "
-                 "faz um único forward pass — muito mais eficiente que N chamadas individuais."
-             ))
-def predict_batch(body: BatchRequest, current_user: User = Depends(get_current_active_user)):
+@router.post("/predict/batch", response_model=BatchResponse, tags=["Predict"])
+def predict_batch(body: BatchRequest,
+                  current_user: User = Depends(get_current_active_user)):
     ctx = get_model_context()
     _check_ready(ctx)
 
@@ -566,124 +532,136 @@ def predict_batch(body: BatchRequest, current_user: User = Depends(get_current_a
     tensor = _preprocess_and_tensorize(rows, ctx)
 
     with torch.no_grad():
-        logits     = ctx["model"](tensor)                        # (N, C)
-        probs_all  = torch.softmax(logits, dim=1).cpu().numpy()  # (N, C)
+        logits    = ctx["model"](tensor)
+        probs_all = torch.softmax(logits, dim=1).cpu().numpy()
 
-    now     = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     results = []
     for student, probs in zip(body.students, probs_all):
         pred_idx  = int(np.argmax(probs))
         label     = _DEFASAGEM_LABELS[pred_idx]
         prob_dict = {_DEFASAGEM_LABELS[i]: round(float(p), 6) for i, p in enumerate(probs)}
-        max_prob  = float(probs[pred_idx])
         results.append(PredictionResult(
             student_id=student.student_id,
             defasagem_classe=pred_idx,
             defasagem_label=label,
             probabilities=prob_dict,
-            confidence=_confidence_label(max_prob),
+            confidence=_confidence_label(float(probs[pred_idx])),
             prediction_id=str(uuid4()),
             timestamp=now,
         ))
 
-    # log each prediction
     for student, res in zip(body.students, results):
-        mongo_logger.log_prediction({
-            "prediction_id": res.prediction_id,
-            "timestamp": now,
-            "user": current_user.username,
-            "student_id": student.student_id,
-            "features": _features_to_row(student.features),
-            "defasagem_classe": res.defasagem_classe,
-            "defasagem_label": res.defasagem_label,
-            "probabilities": res.probabilities,
-        })
+        try:
+            db_log_prediction(_serialize({
+                "prediction_id":    res.prediction_id,
+                "timestamp":        now,
+                "user":             current_user.username,
+                "student_id":       student.student_id,
+                "features":         _features_to_row(student.features),
+                "defasagem_classe": res.defasagem_classe,
+                "defasagem_label":  res.defasagem_label,
+                "probabilities":    res.probabilities,
+                "confidence":       res.confidence,
+            }), settings.database_url)
+        except Exception as e:
+            logger.warning("Erro ao gravar predição batch: %s", e)
 
     return BatchResponse(total=len(results), predictions=results, timestamp=now)
 
 
-# ════════════════════════════════════════════════════════════
-# ROTAS — FEATURES & THRESHOLDS
-# ════════════════════════════════════════════════════════════
+# ============================================================
+# FEATURES & THRESHOLDS
+# ============================================================
 
-# monitoring endpoints
-
-@router.get("/monitor/logs", status_code=status.HTTP_200_OK,
-            tags=["Monitoring"],
-            dependencies=[Depends(get_current_active_user)],
-            summary="Retorna logs de predições do modelo",
-            description="Pode filtrar por usuário, aluno ou intervalo de datas.")
-def monitor_logs(user: Optional[str] = None,
-                 student_id: Optional[str] = None):
-    # connect direto ao Mongo para consultas ad-hoc
-    try:
-        client = MongoLogger().client
-        if client is None:
-            raise RuntimeError("Mongo client indisponível")
-        db = client[settings.mongo_db]
-        query = {}
-        if user:
-            query["user"] = user
-        if student_id:
-            query["student_id"] = student_id
-        docs = list(db.predictions.find(query, {"_id": 0}))
-        return docs
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/monitor/features", status_code=status.HTTP_200_OK,
-            tags=["Monitoring"],
-            dependencies=[Depends(get_current_active_user)],
-            summary="Retorna chaves armazenadas no Redis",
-            description="Consulta o store online do Feast (Redis) e lista as chaves de features presentes.")
-def monitor_features():
-    try:
-        client = redis.Redis(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            socket_connect_timeout=3,
-            socket_timeout=3,
-        )
-        keys = client.keys("*")
-        # retornar strings em vez de bytes
-        return [k.decode("utf-8") for k in keys]
-    except Exception as e:
-        # Falha ao conectar no Redis não impede o resto da API;
-        # devolvemos lista vazia e registramos o erro.
-        logger.warning(f"Redis unreachable ({settings.redis_host}:{settings.redis_port}): {e}")
-        return []
-
-
-@router.get("/features", response_model=List[FeatureInfo],
-            status_code=status.HTTP_200_OK, tags=["Features"],
-            description=(
-                "Features com descrição, tipo e **intervalo válido** extraído "
-                "do preprocessador ajustado. Envie valores dentro desses intervalos."
-            ))
+@router.get("/features", response_model=List[FeatureInfo], tags=["Features"])
 def features():
     return _build_feature_info(get_model_context())
 
 
-# Thresholds por classe de defasagem (opcional, não usado por padrão)
-_CLASS_THRESHOLDS: Dict[str, float] = {}
-
-
-@router.get("/thresholds", response_model=ThresholdInfo,
-            status_code=status.HTTP_200_OK, tags=["Thresholds"],
-            dependencies=[Depends(get_current_active_user)],
-            summary="Limiar de confiança mínima",
-            description="Confiança mínima para aceitar uma predição de defasagem.")
+@router.get("/thresholds", response_model=ThresholdInfo, tags=["Thresholds"],
+            dependencies=[Depends(get_current_active_user)])
 def get_threshold():
-    return ThresholdInfo(threshold=0.0,
-                         updated_at=datetime.now(timezone.utc).isoformat())
+    return ThresholdInfo(threshold=0.0, updated_at=datetime.now(timezone.utc).isoformat())
 
 
-@router.put("/thresholds", response_model=ThresholdInfo,
-            status_code=status.HTTP_200_OK, tags=["Thresholds"],
-            dependencies=[Depends(get_current_active_user)],
-            summary="Atualizar limiar de confiança",
-            description="Define confiança mínima para aceitar predições (0 = aceita tudo).")
+@router.put("/thresholds", response_model=ThresholdInfo, tags=["Thresholds"],
+            dependencies=[Depends(get_current_active_user)])
 def update_threshold(body: ThresholdUpdate):
     return ThresholdInfo(threshold=body.threshold,
                          updated_at=datetime.now(timezone.utc).isoformat())
+
+
+# ============================================================
+# MONITORING
+# ============================================================
+
+@router.get("/monitor/logs", tags=["Monitoring"],
+            dependencies=[Depends(get_current_active_user)],
+            summary="Logs de predições (PostgreSQL)")
+def monitor_logs(
+    user:       Optional[str] = Query(None),
+    student_id: Optional[str] = Query(None),
+    limit:      int           = Query(200, ge=1, le=5000),
+):
+    try:
+        records = query_predictions(settings.database_url, user=user,
+                                    student_id=student_id, limit=limit)
+        for r in records:
+            for k, v in r.items():
+                if hasattr(v, "isoformat"):
+                    r[k] = v.isoformat()
+        return records
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/monitor/drift", tags=["Monitoring"],
+            dependencies=[Depends(get_current_active_user)],
+            summary="Resumo de drift — distribuição das predições")
+def monitor_drift():
+    try:
+        summary = get_drift_summary(settings.database_url)
+        for row in summary.get("class_distribution", []):
+            for k, v in row.items():
+                if hasattr(v, "isoformat"):
+                    row[k] = v.isoformat()
+        return summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/monitor/runs", tags=["Monitoring"],
+            dependencies=[Depends(get_current_active_user)],
+            summary="Histórico de runs de treinamento")
+def monitor_runs():
+    try:
+        runs = list_model_runs(settings.database_url)
+        for r in runs:
+            for k, v in r.items():
+                if hasattr(v, "isoformat"):
+                    r[k] = v.isoformat()
+        return runs
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/monitor/events", tags=["Monitoring"],
+            dependencies=[Depends(get_current_active_user)],
+            summary="Eventos de monitoramento do sistema")
+def monitor_events(
+    event_type: Optional[str] = Query(None),
+    severity:   Optional[str] = Query(None),
+    limit:      int           = Query(200, ge=1, le=2000),
+):
+    try:
+        events = query_monitoring_logs(settings.database_url,
+                                       event_type=event_type,
+                                       severity=severity, limit=limit)
+        for e in events:
+            for k, v in e.items():
+                if hasattr(v, "isoformat"):
+                    e[k] = v.isoformat()
+        return events
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

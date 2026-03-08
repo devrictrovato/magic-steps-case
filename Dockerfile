@@ -1,73 +1,31 @@
-# =============================================================
-# Dockerfile — Magic Steps Prediction API (Render | CPU)
-# =============================================================
-
+# ============================================================
+# Magic Steps MLOps — Dockerfile
+# ============================================================
 FROM python:3.10-slim
 
-# Evita .pyc e melhora logs no Render
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Atualiza certificados SSL e dependências mínimas
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libgomp1 \
-    gcc \
-    g++ \
-    ca-certificates \
-    && update-ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Diretório da aplicação
 WORKDIR /app
 
-# Copia apenas requirements primeiro (melhor cache)
+# ── dependências do sistema ───────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── dependências Python ───────────────────────────────────────
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Atualiza pip e instala dependências
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    && pip install certifi
+# ── código da aplicação ───────────────────────────────────────
+COPY . .
 
-# PYTHONPATH para imports planos
-ENV PYTHONPATH=/app/app:/app:/app/src
+# ── variáveis de ambiente padrão (sobrescritas pelo .env) ─────
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DATABASE_URL=postgresql://db_magic_steps_user:0hT1fLv2GkMb4McXAhZeUBAJUTgQtSLV@dpg-d6mo2hlm5p6s73fv0dt0-a.virginia-postgres.render.com/db_magic_steps
 
-# =============================
-# Variáveis de ambiente
-# =============================
-
-ENV REDIS_HOST=redis
-ENV REDIS_PORT=6379
-
-# URI corrigida MongoDB Atlas
-ENV MONGO_URI="mongodb+srv://dbuser:6r2jt27yAF7Sn4ZH@cluster-magic-steps.ksobi7u.mongodb.net/magic_steps_logs?retryWrites=true&w=majority&tls=true"
-
-ENV MONGO_DB=magic_steps_logs
-
-# =============================
-# Código da API
-# =============================
-
-COPY app/context.py app/
-COPY app/main.py    app/
-COPY app/routes.py  app/
-
-# incluir código auxiliar
-COPY src/ src/
-
-# Artefatos do modelo
-COPY app/model/model_magic_steps_dl.pt app/model/
-COPY out/preprocessor.joblib out/
-
-# .env opcional
-COPY .env* .
-
-# Porta padrão Render
-ENV PORT=8000
 EXPOSE 8000
 
-# =============================
-# Inicialização da API
-# =============================
+# ── healthcheck ───────────────────────────────────────────────
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -21,7 +21,6 @@ FEAST_REPO_DIR = PROJECT_ROOT / "out/features"
 ARTIFACTS_DIR = PROJECT_ROOT / "out/"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
-# Criar diretórios se não existirem
 for directory in [DATA_DIR, OUTPUT_DIR, MODELS_DIR, LOGS_DIR, ARTIFACTS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -40,26 +39,20 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    # Projeto
     project_name: str = "magic_steps_mlops"
     environment: str = "development"
 
-    # Redis (para Feast online store e cache da API)
-    redis_host: str = "localhost"
-    redis_port: int = 6379
+    # ── PostgreSQL (banco principal — dados brutos, features, logs, monitoramento) ──
+    database_url: str = (
+        "postgresql://db_magic_steps_user:0hT1fLv2GkMb4McXAhZeUBAJUTgQtSLV"
+        "@dpg-d6mo2hlm5p6s73fv0dt0-a.virginia-postgres.render.com/db_magic_steps"
+    )
 
-    # MongoDB para logs de uso do modelo
-    mongo_uri: str = "mongodb://localhost:27017"
-    mongo_db: str = "magic_steps_logs"
-
-    # Random State
     random_state: int = 42
 
-    # MLflow (opcional, usado apenas pelo pipeline de treino)
     mlflow_tracking_uri: str = "http://localhost:5000"
     mlflow_experiment_name: str = "magic_steps_experiment"
 
-    # Segurança / autenticação
     secret_key: str = Field("change_me")
     access_token_expire_minutes: int = Field(60)
 
@@ -70,94 +63,34 @@ class Settings(BaseSettings):
 
 @dataclass
 class DataConfig:
-    """Configurações relacionadas aos dados."""
-
-    # ── Target ───────────────────────────────────────────────
-    # "defasagem" é a variável-alvo: valor inteiro (-5 a +2).
-    # Não precisa de mapeamento textual — já é numérica na planilha.
     target_column: str = "defasagem"
-
-    # target_map não é usado para defasagem (mapeamento feito por bucket em
-    # DataTransformer.bucket_defasagem). Mantido vazio para compatibilidade.
     target_map: Dict[str, int] = field(default_factory=lambda: {})
-
-    # Rótulos legíveis das classes ternárias de defasagem
     defasagem_class_labels: Dict[int, str] = field(default_factory=lambda: {
-        0: "atraso",   # defasagem < 0
-        1: "neutro",   # defasagem == 0
-        2: "avanço",   # defasagem > 0
+        0: "atraso", 1: "neutro", 2: "avanço",
     })
-
-    # ── Colunas a remover ────────────────────────────────────
-    # Remove notas individuais de matérias (ruído) e flag_atingiu_pv
-    # (vazamento de informação — correlaciona com defasagem).
     columns_to_drop: List[str] = field(default_factory=lambda: [
-        "nota_ingles",
-        "nota_matematica",
-        "nota_portugues",
-        "flag_atingiu_pv",   # seria vazamento: indica resultado geral do aluno
-        "ano_nascimento",    # redundante com idade
-        "idade",             # redundante com ano_ingresso
+        "nota_ingles", "nota_matematica", "nota_portugues",
+        "flag_atingiu_pv", "ano_nascimento", "idade",
     ])
-
-    # ── Colunas categóricas (usadas pelo OrdinalEncoder) ─────
     categorical_columns: List[str] = field(default_factory=lambda: [
-        "turma",
-        "genero",
-        "pedra_modal",
+        "turma", "genero", "pedra_modal",
     ])
-
-    # ── Mapeamento planilha → nome interno ───────────────────
     column_alias_map: Dict[str, str] = field(default_factory=lambda: {
-        "Fase":          "fase",
-        "Turma":         "turma",
-        "Ano nasc":      "ano_nascimento",
-        "Idade 22":      "idade",
-        "Gênero":        "genero",
-        "Ano ingresso":  "ano_ingresso",
-        "Pedra 20":      "pedra_2020",
-        "Pedra 21":      "pedra_2021",
-        "Pedra 22":      "pedra_2022",
-        "INDE 22":       "score_inde",
-        "IAA":           "score_iaa",
-        "IEG":           "score_ieg",
-        "IPS":           "score_ips",
-        "IDA":           "score_ida",
-        "IPV":           "score_ipv",
-        "IAN":           "score_ian",
-        "Matem":         "nota_matematica",
-        "Portug":        "nota_portugues",
-        "Inglês":        "nota_ingles",
-        "Cg":            "nota_cg",
-        "Cf":            "nota_cf",
-        "Ct":            "nota_ct",
-        "Nº Av":         "num_avaliacoes",
-        "Defas":         "defasagem",
-        "Atingiu PV":    "flag_atingiu_pv",
+        "Fase": "fase", "Turma": "turma", "Ano nasc": "ano_nascimento",
+        "Idade 22": "idade", "Gênero": "genero", "Ano ingresso": "ano_ingresso",
+        "Pedra 20": "pedra_2020", "Pedra 21": "pedra_2021", "Pedra 22": "pedra_2022",
+        "INDE 22": "score_inde", "IAA": "score_iaa", "IEG": "score_ieg",
+        "IPS": "score_ips", "IDA": "score_ida", "IPV": "score_ipv",
+        "IAN": "score_ian", "Matem": "nota_matematica", "Portug": "nota_portugues",
+        "Inglês": "nota_ingles", "Cg": "nota_cg", "Cf": "nota_cf",
+        "Ct": "nota_ct", "Nº Av": "num_avaliacoes", "Defas": "defasagem",
+        "Atingiu PV": "flag_atingiu_pv",
     })
-
-    # ── Ordem das features para o ColumnTransformer ──────────
-    # defasagem NÃO aparece aqui — é o target, não uma feature.
-    # As categóricas (turma, genero, pedra_modal) estão habilitadas.
     final_feature_order: List[str] = field(default_factory=lambda: [
-        # numéricas (14) — idade removida (redundante com ano_ingresso)
-        "fase",
-        "ano_ingresso",
-        "score_inde",
-        "score_iaa",
-        "score_ieg",
-        "score_ips",
-        "score_ida",
-        "score_ipv",
-        "score_ian",
-        "nota_cg",
-        "nota_cf",
-        "nota_ct",
-        "num_avaliacoes",
-        # categóricas (3) — processadas pelo OrdinalEncoder
-        "turma",
-        "genero",
-        "pedra_modal",
+        "fase", "ano_ingresso", "score_inde", "score_iaa", "score_ieg",
+        "score_ips", "score_ida", "score_ipv", "score_ian",
+        "nota_cg", "nota_cf", "nota_ct", "num_avaliacoes",
+        "turma", "genero", "pedra_modal",
     ])
 
 
@@ -167,22 +100,11 @@ class DataConfig:
 
 @dataclass
 class ModelConfig:
-    """Configurações do modelo."""
-
-    # Training
     val_size: float = 0.2
     test_size: float = 0.15
     patience: int = 10
-
-    # Grid Search
     param_grid: Dict[str, List[Any]] = field(default_factory=lambda: {
-        "hidden_layers": [
-            [64],
-            [128],
-            [128, 64],
-            [256, 128],
-            [256, 128, 64],
-        ],
+        "hidden_layers": [[64],[128],[128, 64],[256, 128],[256, 128, 64]],
         "dropout": [0.1, 0.2, 0.3, 0.4],
         "lr": [1e-2, 5e-3, 1e-3, 5e-4],
         "batch_size": [16, 32, 64],
@@ -196,15 +118,9 @@ class ModelConfig:
 
 @dataclass
 class FeastConfig:
-    """Configurações do Feast Feature Store."""
-
     project_name: str = "magic_steps"
-
-    # Entity
     entity_id_column: str = "student_id"
     event_timestamp_column: str = "event_timestamp"
-
-    # Feature views
     feature_views: List[str] = field(default_factory=lambda: [
         "student_academic_features",
         "student_demographic_features",
@@ -213,7 +129,7 @@ class FeastConfig:
 
 
 # ============================================================
-# INSTANTIATE CONFIGS
+# INSTANTIATE
 # ============================================================
 
 settings = Settings()

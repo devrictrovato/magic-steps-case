@@ -1,26 +1,26 @@
 {
   "metrics": {
-    "accuracy": 0.9850249584026622,
-    "balanced_accuracy": 0.9850249584026622,
-    "precision_weighted": 0.9852233943530873,
-    "recall_weighted": 0.9850249584026622,
-    "f1_weighted": 0.9850226259692271,
-    "f1_macro": 0.985022625969227,
-    "cohen_kappa": 0.9775374376039934,
-    "mcc": 0.9776389416519103,
-    "log_loss": 0.044322687673339314,
+    "accuracy": 0.9828064337215752,
+    "balanced_accuracy": 0.9828064337215752,
+    "precision_weighted": 0.9831928890860037,
+    "recall_weighted": 0.9828064337215752,
+    "f1_weighted": 0.9828011840975341,
+    "f1_macro": 0.982801184097534,
+    "cohen_kappa": 0.9742096505823628,
+    "mcc": 0.974407950898999,
+    "log_loss": 0.04432547060398558,
     "top2_accuracy": 1.0,
-    "roc_auc_ovr_weighted": 0.9992303454309373,
-    "roc_auc_ovr_macro": 0.9992303454309374,
+    "roc_auc_ovr_weighted": 0.9993826152197807,
+    "roc_auc_ovr_macro": 0.9993826152197807,
     "precision_atraso": 1.0,
     "recall_atraso": 1.0,
     "f1_atraso": 1.0,
-    "precision_neutro": 0.9897610921501706,
-    "recall_neutro": 0.9650582362728786,
-    "f1_neutro": 0.9772535804549284,
-    "precision_avanco": 0.9659090909090909,
-    "recall_avanco": 0.9900166389351082,
-    "f1_avanco": 0.9778142974527527
+    "precision_neutro": 0.9581993569131833,
+    "recall_neutro": 0.9916805324459235,
+    "f1_neutro": 0.9746524938675388,
+    "precision_avanco": 0.9913793103448276,
+    "recall_avanco": 0.956738768718802,
+    "f1_avanco": 0.9737510584250635
   },
   "confusion_matrix": [
     [
@@ -30,23 +30,24 @@
     ],
     [
       0,
-      580,
-      21
+      596,
+      5
     ],
     [
       0,
-      6,
-      595
+      26,
+      575
     ]
   ],
-  "classification_report": "              precision    recall  f1-score   support\n\n      atraso       1.00      1.00      1.00       601\n      neutro       0.99      0.97      0.98       601\n      avanco       0.97      0.99      0.98       601\n\n    accuracy                           0.99      1803\n   macro avg       0.99      0.99      0.99      1803\nweighted avg       0.99      0.99      0.99      1803\n",
+  "classification_report": "              precision    recall  f1-score   support\n\n      atraso       1.00      1.00      1.00       601\n      neutro       0.96      0.99      0.97       601\n      avanco       0.99      0.96      0.97       601\n\n    accuracy                           0.98      1803\n   macro avg       0.98      0.98      0.98      1803\nweighted avg       0.98      0.98      0.98      1803\n",
   "model_params": {
     "hidden_layers": [
+      256,
       128,
       64
     ],
-    "dropout": 0.3,
-    "lr": 0.001,
+    "dropout": 0.1,
+    "lr": 0.01,
     "batch_size": 64,
     "epochs": 100
   },

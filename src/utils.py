@@ -14,42 +14,24 @@ from settings import settings, LOGS_DIR
 # ============================================================
 
 def setup_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
-    """
-    Configura e retorna um logger.
-    
-    Args:
-        name: Nome do logger
-        log_file: Caminho do arquivo de log (opcional)
-    
-    Returns:
-        Logger configurado
-    """
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
-    
-    # Formatter
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
-    # File handler (se especificado)
-    if log_file:
-        log_path = LOGS_DIR / log_file
-        file_handler = logging.FileHandler(log_path, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-    
+    if not logger.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        if log_file:
+            log_path = LOGS_DIR / log_file
+            file_handler = logging.FileHandler(log_path, encoding='utf-8')
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
     return logger
-
-
 
 
 # ============================================================
@@ -57,55 +39,18 @@ def setup_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
 # ============================================================
 
 class FileManager:
-    """
-    Gerenciador de arquivos do projeto.
-    """
-    
     def __init__(self, base_path: Optional[Path] = None):
-        """
-        Inicializa o gerenciador de arquivos.
-        
-        Args:
-            base_path: Caminho base para os arquivos
-        """
         from settings import DATA_DIR
         self.base_path = base_path or DATA_DIR
         self.logger = setup_logger(self.__class__.__name__)
-    
+
     def get_data_path(self, filename: str) -> Path:
-        """
-        Retorna o caminho completo para um arquivo de dados.
-        
-        Args:
-            filename: Nome do arquivo
-        
-        Returns:
-            Caminho completo do arquivo
-        """
         return self.base_path / filename
-    
+
     def list_files(self, pattern: str = "*") -> list:
-        """
-        Lista arquivos no diretório base.
-        
-        Args:
-            pattern: Padrão para filtrar arquivos
-        
-        Returns:
-            Lista de caminhos de arquivos
-        """
         return list(self.base_path.glob(pattern))
-    
+
     def ensure_directory(self, path: Path) -> Path:
-        """
-        Garante que um diretório existe.
-        
-        Args:
-            path: Caminho do diretório
-        
-        Returns:
-            Caminho do diretório
-        """
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -115,148 +60,83 @@ class FileManager:
 # ============================================================
 
 class ModelRegistry:
-    """
-    Registro de modelos treinados.
-    """
-    
     def __init__(self, registry_path: Optional[Path] = None):
-        """
-        Inicializa o registro de modelos.
-        
-        Args:
-            registry_path: Caminho do registro de modelos
-        """
         from settings import MODELS_DIR
         self.registry_path = registry_path or MODELS_DIR
         self.registry_path.mkdir(parents=True, exist_ok=True)
         self.logger = setup_logger(self.__class__.__name__)
-    
-    def save_model_metadata(
-        self,
-        model_name: str,
-        metadata: Dict[str, Any],
-    ) -> None:
-        """
-        Salva metadados de um modelo.
-        
-        Args:
-            model_name: Nome do modelo
-            metadata: Metadados do modelo
-        """
+
+    def save_model_metadata(self, model_name: str, metadata: Dict[str, Any]) -> None:
         import json
-        
         metadata_path = self.registry_path / f"{model_name}_metadata.json"
-        
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
         self.logger.info(f"Metadados salvos em {metadata_path}")
-    
+
     def load_model_metadata(self, model_name: str) -> Dict[str, Any]:
-        """
-        Carrega metadados de um modelo.
-        
-        Args:
-            model_name: Nome do modelo
-        
-        Returns:
-            Metadados do modelo
-        """
         import json
-        
         metadata_path = self.registry_path / f"{model_name}_metadata.json"
-        
         if not metadata_path.exists():
             raise FileNotFoundError(f"Metadados não encontrados: {metadata_path}")
-        
         with open(metadata_path, 'r', encoding='utf-8') as f:
-            metadata = json.load(f)
-        
-        return metadata
-    
+            return json.load(f)
+
     def list_models(self) -> list:
-        """
-        Lista todos os modelos registrados.
-        
-        Returns:
-            Lista de nomes de modelos
-        """
         model_files = list(self.registry_path.glob("*_metadata.json"))
-        models = [f.stem.replace('_metadata', '') for f in model_files]
-        return models
+        return [f.stem.replace('_metadata', '') for f in model_files]
 
 
 # ============================================================
-# MONGODB LOGGER
+# POSTGRES LOGGER  (substitui MongoLogger)
 # ============================================================
 
-try:
-    from pymongo import MongoClient as _PymongoClient
-except ImportError:  # pymongo may not be installed during tests
-    _PymongoClient = None
+class PostgresLogger:
+    """
+    Registra logs de predição e eventos de monitoramento no PostgreSQL.
+    Drop-in replacement do MongoLogger — mesma interface pública.
+    """
 
-import certifi
+    def __init__(self, database_url: Optional[str] = None):
+        from settings import settings as _s
+        import logging as _logging
+        from db import ensure_schema
 
-class MongoLogger:
-    """Cliente simples para gravar logs de predição em MongoDB."""
-
-    def __init__(self, uri: str | None = None, db_name: str | None = None):
-        from settings import settings
-        import logging
-
-        self.uri = uri or settings.mongo_uri
-        self.db_name = db_name or settings.mongo_db
-        self.logger = logging.getLogger(self.__class__.__name__)
-
-        if _PymongoClient is None:
-            self.logger.warning("pymongo não instalado, MongoLogger ficará inoperante")
-            self.client = None
-            self.db = None
-            return
+        self.database_url = database_url or _s.database_url
+        self.logger = _logging.getLogger(self.__class__.__name__)
+        self._available = False
 
         try:
-            self.client = _PymongoClient(
-                self.uri,
-
-                # timeouts maiores (cloud)
-                serverSelectionTimeoutMS=30000,
-                connectTimeoutMS=30000,
-                socketTimeoutMS=30000,
-
-                # TLS correto para MongoDB Atlas
-                tls=True,
-                tlsCAFile=certifi.where(),
-
-                # estabilidade
-                retryWrites=True,
-                appname="magic-steps-api",
-            )
-
-            # força conexão imediata
-            self.client.admin.command("ping")
-
-            self.db = self.client[self.db_name]
-
-            self.logger.info("Conectado ao MongoDB com sucesso")
-
+            ensure_schema(self.database_url)
+            self._available = True
+            self.logger.info("PostgresLogger: schema ok.")
         except Exception as e:
-            self.logger.error(f"Erro ao conectar MongoDB: {e}")
-            self.client = None
-            self.db = None
+            self.logger.error(f"PostgresLogger indisponível: {e}")
 
     def log_prediction(self, record: dict) -> None:
-        """Insere um documento na coleção `predictions`."""
-
-        if self.db is None:
-            self.logger.debug("MongoDB não disponível, log ignorado")
+        """Insere um registro de predição no PostgreSQL."""
+        if not self._available:
+            self.logger.debug("PostgreSQL não disponível, log ignorado.")
             return
-
         try:
-            self.db.predictions.insert_one(record)
-            self.logger.debug("log de predição gravado em MongoDB")
-
+            from db import log_prediction as _log
+            _log(record, self.database_url)
         except Exception as e:
-            self.logger.error(f"falha ao inserir log de predição: {e}")
+            self.logger.error(f"Falha ao gravar log de predição: {e}")
+
+    def log_monitoring(self, event_type: str, details: dict,
+                       severity: str = "info") -> None:
+        """Registra evento de monitoramento."""
+        if not self._available:
+            return
+        try:
+            from db import log_monitoring_event
+            log_monitoring_event(event_type, details, self.database_url, severity)
+        except Exception as e:
+            self.logger.error(f"Falha ao gravar evento de monitoramento: {e}")
+
+
+# Alias para manter compatibilidade com código que importava MongoLogger
+MongoLogger = PostgresLogger
 
 
 # ============================================================
@@ -267,5 +147,6 @@ __all__ = [
     'setup_logger',
     'FileManager',
     'ModelRegistry',
+    'PostgresLogger',
     'MongoLogger',
 ]
