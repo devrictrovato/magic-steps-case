@@ -39,10 +39,10 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 import jwt
 
-from context import get_model_context
-from settings import settings
-from utils import PostgresLogger
-from db import (
+from .context import get_model_context
+from src.settings import settings
+from src.utils import PostgresLogger
+from src.db import (
     ensure_schema,
     log_prediction as db_log_prediction,
     query_predictions,

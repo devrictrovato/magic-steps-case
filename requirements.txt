@@ -75,8 +75,6 @@ typing_extensions
 tzdata
 urllib3
 uvicorn
-uvicorn-worker
-waitress
 watchfiles
 websocket-client
 websockets
@@ -85,7 +83,8 @@ wrapt
 xmltodict
 redis
 zipp
-torch
 pymongo
 passlib[bcrypt]
-redis
+
+# PyTorch CPU ONLY
+torch==2.2.2+cpu --index-url https://download.pytorch.org/whl/cpu
