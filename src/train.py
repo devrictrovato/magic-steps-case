@@ -58,7 +58,8 @@ class MagicStepsDataset(Dataset):
             y: Labels
         """
         self.X = torch.tensor(X, dtype=torch.float32)
-        self.y = torch.tensor(y, dtype=torch.float32)
+        # CrossEntropyLoss exige long para labels de classe
+        self.y = torch.tensor(y, dtype=torch.long)
     
     def __len__(self) -> int:
         return len(self.y)
@@ -90,11 +91,17 @@ class DataLoader_:
         target_col = data_config.target_column
         
         X = df.drop(columns=[target_col]).values.astype("float32")
-        y = df[target_col].values.astype("float32")
+        y_raw = df[target_col].values
         
+        # Classes já são 0/1/2 (bucket_defasagem no preprocessing)
+        y = y_raw.astype("int64")
+        num_classes = 3  # 0=atraso, 1=neutro, 2=avanço
+
         self.logger.info(f"Dataset carregado. X shape: {X.shape}, y shape: {y.shape}")
-        
-        return X, y
+        dist = dict(zip(*np.unique(y, return_counts=True)))
+        self.logger.info(f"Distribuição: {dist} | 0=atraso 1=neutro 2=avanço")
+
+        return X, y, num_classes
 
 
 # ============================================================
@@ -102,13 +109,14 @@ class DataLoader_:
 # ============================================================
 
 class MagicStepsNet(nn.Module):
-    """Rede Neural para classificação binária."""
+    """Rede Neural para classificação multiclasse (defasagem)."""
     
     def __init__(
         self,
         input_dim: int,
         hidden_layers: List[int],
         dropout: float = 0.2,
+        num_classes: int = 2,
     ):
         """
         Inicializa a rede neural.
@@ -117,6 +125,7 @@ class MagicStepsNet(nn.Module):
             input_dim: Dimensão de entrada
             hidden_layers: Lista com dimensões das camadas ocultas
             dropout: Taxa de dropout
+            num_classes: Número de classes de saída (len(label_encoder.classes_))
         """
         super().__init__()
         
@@ -132,22 +141,22 @@ class MagicStepsNet(nn.Module):
             ])
             prev_dim = h
         
-        # Camada de saída
-        layers.append(nn.Linear(prev_dim, 1))
+        # Camada de saída com num_classes neurônios
+        layers.append(nn.Linear(prev_dim, num_classes))
         
         self.net = nn.Sequential(*layers)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass.
+        Forward pass — retorna logits (sem softmax).
         
         Args:
             x: Input tensor
         
         Returns:
-            Output tensor
+            Logits shape (batch, num_classes)
         """
-        return self.net(x).squeeze(1)
+        return self.net(x)
 
 
 # ============================================================
@@ -320,6 +329,7 @@ class GridSearchCV:
         y_train: np.ndarray,
         X_val: np.ndarray,
         y_val: np.ndarray,
+        num_classes: int = 2,
     ) -> Dict[str, Any]:
         """
         Executa o Grid Search.
@@ -345,7 +355,7 @@ class GridSearchCV:
             
             # Treinar modelo com esses parâmetros
             val_loss = self._fit_with_params(
-                X_train, y_train, X_val, y_val, params
+                X_train, y_train, X_val, y_val, params, num_classes=num_classes
             )
             
             # Armazenar resultados
@@ -370,6 +380,7 @@ class GridSearchCV:
         X_val: np.ndarray,
         y_val: np.ndarray,
         params: Dict[str, Any],
+        num_classes: int = 2,
     ) -> float:
         """
         Treina modelo com parâmetros específicos.
@@ -389,6 +400,7 @@ class GridSearchCV:
             input_dim=X_train.shape[1],
             hidden_layers=params["hidden_layers"],
             dropout=params["dropout"],
+            num_classes=num_classes,
         )
         
         # Criar trainer
@@ -407,8 +419,8 @@ class GridSearchCV:
             shuffle=False,
         )
         
-        # Configurar treinamento
-        criterion = nn.BCEWithLogitsLoss()
+        # CrossEntropyLoss para multiclasse
+        criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=params["lr"])
         
         # Treinar
@@ -469,7 +481,8 @@ class TrainingPipeline:
         
         # 1. Carregar dados
         data_loader = DataLoader_()
-        X, y = data_loader.load_dataset(use_feast=use_feast)
+        X, y, num_classes = data_loader.load_dataset(use_feast=use_feast)
+        self.logger.info(f"Número de classes (defasagem): {num_classes}")
         
         # 2. Split dos dados
         X_train, X_val, y_train, y_val = train_test_split(
@@ -484,7 +497,7 @@ class TrainingPipeline:
         
         # 3. Grid Search (opcional)
         if perform_grid_search:
-            best_params = self._perform_grid_search(X_train, y_train, X_val, y_val)
+            best_params = self._perform_grid_search(X_train, y_train, X_val, y_val, num_classes=num_classes)
         else:
             # Usar parâmetros padrão
             best_params = {
@@ -496,10 +509,11 @@ class TrainingPipeline:
             }
         
         # 4. Treinar modelo final
-        model, history = self._train_final_model(X, y, best_params)
+        model, history = self._train_final_model(X, y, best_params, num_classes=num_classes)
         
         # 5. Salvar modelo
-        self._save_model(model, best_params, history)
+        # 5. Salvar modelo (inclui num_classes e label_encoder para inferência)
+        self._save_model(model, best_params, history, num_classes=num_classes)
         
         self.logger.info("=" * 60)
         self.logger.info("TREINAMENTO CONCLUÍDO COM SUCESSO!")
@@ -517,6 +531,7 @@ class TrainingPipeline:
         y_train: np.ndarray,
         X_val: np.ndarray,
         y_val: np.ndarray,
+        num_classes: int = 2,
     ) -> Dict[str, Any]:
         """Realiza grid search."""
         self.logger.info("\n🔍 Iniciando Grid Search...")
@@ -526,7 +541,7 @@ class TrainingPipeline:
             device=DEVICE,
         )
         
-        best_params = grid_search.fit(X_train, y_train, X_val, y_val)
+        best_params = grid_search.fit(X_train, y_train, X_val, y_val, num_classes=num_classes)
         
         return best_params
     
@@ -535,6 +550,7 @@ class TrainingPipeline:
         X: np.ndarray,
         y: np.ndarray,
         best_params: Dict[str, Any],
+        num_classes: int = 2,
     ) -> Tuple[nn.Module, Dict[str, List[float]]]:
         """Treina modelo final com todos os dados."""
         self.logger.info("\n🧠 Treinando modelo final...")
@@ -544,6 +560,7 @@ class TrainingPipeline:
             input_dim=X.shape[1],
             hidden_layers=best_params["hidden_layers"],
             dropout=best_params["dropout"],
+            num_classes=num_classes,
         )
         
         # Criar trainer
@@ -556,8 +573,8 @@ class TrainingPipeline:
             shuffle=True,
         )
         
-        # Configurar treinamento
-        criterion = nn.BCEWithLogitsLoss()
+        # CrossEntropyLoss para multiclasse
+        criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=best_params["lr"])
         
         # Treinar
@@ -577,6 +594,7 @@ class TrainingPipeline:
         model: nn.Module,
         best_params: Dict[str, Any],
         history: Dict[str, List[float]],
+        num_classes: int = 3,
     ) -> None:
         """Salva modelo e metadados."""
         model_name = "model_magic_steps_dl"
@@ -588,6 +606,8 @@ class TrainingPipeline:
             "input_dim": list(model.parameters())[0].shape[1],
             "best_params": best_params,
             "history": history,
+            "num_classes": num_classes,
+            "class_labels": {0: "atraso", 1: "neutro", 2: "avanço"},
         }
         
         torch.save(checkpoint, model_path)

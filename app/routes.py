@@ -144,6 +144,9 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
     return current_user
 
 
+# Rótulos das classes ternárias de defasagem
+_DEFASAGEM_LABELS: Dict[int, str] = {0: "atraso", 1: "neutro", 2: "avanço"}
+
 # instância de logger Mongo (pode falhar silenciosamente se não houver pymongo)
 mongo_logger = MongoLogger()
 
@@ -181,13 +184,13 @@ class StudentFeatures(BaseModel):
 
     Intervalos extraídos do preprocessor.joblib ajustado nos dados
     de treinamento (860 alunos, BASE DE DADOS PEDE 2024).
+
+    Nota: ``defasagem`` não é feature — é a variável-alvo predita pelo modelo.
     """
 
     # ── numéricas ─────────────────────────────────────────
     fase:           int   = Field(..., ge=0,     le=7,
                                   description="Fase educacional (0 a 7)")
-    idade:          int   = Field(..., ge=7,     le=21,
-                                  description="Idade do aluno em anos")
     ano_ingresso:   int   = Field(..., ge=2016,  le=2022,
                                   description="Ano de ingresso no programa")
     score_inde:     float = Field(..., ge=3.0,   le=9.5,
@@ -212,9 +215,6 @@ class StudentFeatures(BaseModel):
                                   description="Caderneta de Tradição")
     num_avaliacoes: int   = Field(..., ge=2,     le=4,
                                   description="Número de avaliações realizadas")
-    defasagem:      int   = Field(..., ge=-5,    le=2,
-                                  description="Defasagem acadêmica (pode ser negativa)")
-
     # ── categóricas ───────────────────────────────────────
     turma:       TurmaEnum  = Field(..., description="Letra da turma (minúscula)")
     genero:      GeneroEnum = Field(..., description="Gênero do aluno")
@@ -232,12 +232,13 @@ class StudentInput(BaseModel):
 # ════════════════════════════════════════════════════════════
 
 class PredictionResult(BaseModel):
-    student_id:     Optional[str]
-    probability:    float = Field(..., description="P(atingiu PV) entre 0 e 1")
-    prediction:     int   = Field(..., description="Classe predita: 0 = não atingiu, 1 = atingiu PV")
-    confidence:     str   = Field(..., description="alta / média / baixa")
-    prediction_id:  str   = Field(..., description="UUID da inferência")
-    timestamp:      str   = Field(..., description="Timestamp ISO-8601")
+    student_id:         Optional[str]
+    defasagem_classe:   int   = Field(..., description="Classe predita: 0=atraso, 1=neutro, 2=avanço")
+    defasagem_label:    str   = Field(..., description="Rótulo da classe: atraso / neutro / avanço")
+    probabilities:      Dict[str, float] = Field(..., description="Probabilidade por classe (atraso/neutro/avanço)")
+    confidence:         str   = Field(..., description="alta / média / baixa")
+    prediction_id:      str   = Field(..., description="UUID da inferência")
+    timestamp:          str   = Field(..., description="Timestamp ISO-8601")
 
 
 class BatchRequest(BaseModel):
@@ -274,22 +275,19 @@ class ThresholdUpdate(BaseModel):
 # HELPERS
 # ════════════════════════════════════════════════════════════
 
-_THRESHOLD: float = 0.5
-
 # Colunas na ordem que o ColumnTransformer recebe.
 _INPUT_COLUMNS = [
-    "fase", "idade", "ano_ingresso",
+    "fase", "ano_ingresso",
     "score_inde", "score_iaa", "score_ieg", "score_ips",
     "score_ida", "score_ipv", "score_ian",
     "nota_cg", "nota_cf", "nota_ct",
-    "num_avaliacoes", "defasagem",
+    "num_avaliacoes",
     "turma", "genero", "pedra_modal",
 ]
 
 # Descrições estáticas para /features e /info
 _FEATURE_META = {
     "fase":           ("int",   "Fase educacional do aluno"),
-    "idade":          ("int",   "Idade em anos"),
     "ano_ingresso":   ("int",   "Ano de ingresso no programa"),
     "score_inde":     ("float", "INDE — Índice de Desenvolvimento Educacional"),
     "score_iaa":      ("float", "IAA  — Índice de Aprendizagem Ativa"),
@@ -302,18 +300,17 @@ _FEATURE_META = {
     "nota_cf":        ("int",   "Caderneta de Formação"),
     "nota_ct":        ("int",   "Caderneta de Tradição"),
     "num_avaliacoes": ("int",   "Número de avaliações realizadas"),
-    "defasagem":      ("int",   "Defasagem acadêmica (pode ser negativa)"),
     "turma":          ("categorical", "Letra da turma"),
     "genero":         ("categorical", "Gênero do aluno"),
     "pedra_modal":    ("categorical", "Pedra modal (melhor classificação nos 3 anos)"),
 }
 
 
-def _confidence_label(prob: float) -> str:
-    dist = abs(prob - 0.5)
-    if dist >= 0.30:
+def _confidence_label(max_prob: float) -> str:
+    """Converte a probabilidade máxima da classe predita em rótulo de confiança."""
+    if max_prob >= 0.60:
         return "alta"
-    if dist >= 0.15:
+    if max_prob >= 0.40:
         return "média"
     return "baixa"
 
@@ -466,7 +463,7 @@ def info(current_user: User = Depends(get_current_active_user)):
         "device":               str(ctx["device"]),
         "preprocessor_loaded":  ctx["preprocessor"] is not None,
         "n_features":           len(_INPUT_COLUMNS),
-        "threshold":            _THRESHOLD,
+        # "threshold":            _THRESHOLD,
         "features":             _build_feature_info(ctx),
     }
 
@@ -519,13 +516,20 @@ def predict(student: StudentInput, current_user: User = Depends(get_current_acti
     tensor = _preprocess_and_tensorize([row], ctx)
 
     with torch.no_grad():
-        prob = torch.sigmoid(ctx["model"](tensor)).item()
+        logits = ctx["model"](tensor)                          # (1, C)
+        probs  = torch.softmax(logits, dim=1).cpu().numpy()[0] # (C,)
+
+    pred_idx  = int(np.argmax(probs))
+    label     = _DEFASAGEM_LABELS[pred_idx]
+    prob_dict = {_DEFASAGEM_LABELS[i]: round(float(p), 6) for i, p in enumerate(probs)}
+    max_prob  = float(probs[pred_idx])
 
     result = PredictionResult(
         student_id=student.student_id,
-        probability=round(prob, 6),
-        prediction=int(prob >= _THRESHOLD),
-        confidence=_confidence_label(prob),
+        defasagem_classe=pred_idx,
+        defasagem_label=label,
+        probabilities=prob_dict,
+        confidence=_confidence_label(max_prob),
         prediction_id=str(uuid4()),
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
@@ -537,8 +541,9 @@ def predict(student: StudentInput, current_user: User = Depends(get_current_acti
         "user": current_user.username,
         "student_id": student.student_id,
         "features": row,
-        "probability": result.probability,
-        "prediction": result.prediction,
+        "defasagem_classe": result.defasagem_classe,
+        "defasagem_label": result.defasagem_label,
+        "probabilities": result.probabilities,
     }
     mongo_logger.log_prediction(log_record)
 
@@ -561,17 +566,22 @@ def predict_batch(body: BatchRequest, current_user: User = Depends(get_current_a
     tensor = _preprocess_and_tensorize(rows, ctx)
 
     with torch.no_grad():
-        probs = torch.sigmoid(ctx["model"](tensor)).cpu().numpy()
+        logits     = ctx["model"](tensor)                        # (N, C)
+        probs_all  = torch.softmax(logits, dim=1).cpu().numpy()  # (N, C)
 
     now     = datetime.now(timezone.utc).isoformat()
     results = []
-    for student, prob in zip(body.students, probs):
-        p = float(prob)
+    for student, probs in zip(body.students, probs_all):
+        pred_idx  = int(np.argmax(probs))
+        label     = _DEFASAGEM_LABELS[pred_idx]
+        prob_dict = {_DEFASAGEM_LABELS[i]: round(float(p), 6) for i, p in enumerate(probs)}
+        max_prob  = float(probs[pred_idx])
         results.append(PredictionResult(
             student_id=student.student_id,
-            probability=round(p, 6),
-            prediction=int(p >= _THRESHOLD),
-            confidence=_confidence_label(p),
+            defasagem_classe=pred_idx,
+            defasagem_label=label,
+            probabilities=prob_dict,
+            confidence=_confidence_label(max_prob),
             prediction_id=str(uuid4()),
             timestamp=now,
         ))
@@ -584,8 +594,9 @@ def predict_batch(body: BatchRequest, current_user: User = Depends(get_current_a
             "user": current_user.username,
             "student_id": student.student_id,
             "features": _features_to_row(student.features),
-            "probability": res.probability,
-            "prediction": res.prediction,
+            "defasagem_classe": res.defasagem_classe,
+            "defasagem_label": res.defasagem_label,
+            "probabilities": res.probabilities,
         })
 
     return BatchResponse(total=len(results), predictions=results, timestamp=now)
@@ -654,22 +665,25 @@ def features():
     return _build_feature_info(get_model_context())
 
 
+# Thresholds por classe de defasagem (opcional, não usado por padrão)
+_CLASS_THRESHOLDS: Dict[str, float] = {}
+
+
 @router.get("/thresholds", response_model=ThresholdInfo,
             status_code=status.HTTP_200_OK, tags=["Thresholds"],
             dependencies=[Depends(get_current_active_user)],
-            summary="Limiar atual", description="Classe = 1 se P ≥ threshold.")
+            summary="Limiar de confiança mínima",
+            description="Confiança mínima para aceitar uma predição de defasagem.")
 def get_threshold():
-    return ThresholdInfo(threshold=_THRESHOLD,
+    return ThresholdInfo(threshold=0.0,
                          updated_at=datetime.now(timezone.utc).isoformat())
 
 
 @router.put("/thresholds", response_model=ThresholdInfo,
             status_code=status.HTTP_200_OK, tags=["Thresholds"],
             dependencies=[Depends(get_current_active_user)],
-            summary="Atualizar limiar",
-            description="Valor alto → conservador. Valor baixo → agressivo. Mudança imediata.")
+            summary="Atualizar limiar de confiança",
+            description="Define confiança mínima para aceitar predições (0 = aceita tudo).")
 def update_threshold(body: ThresholdUpdate):
-    global _THRESHOLD
-    _THRESHOLD = body.threshold
-    return ThresholdInfo(threshold=_THRESHOLD,
+    return ThresholdInfo(threshold=body.threshold,
                          updated_at=datetime.now(timezone.utc).isoformat())

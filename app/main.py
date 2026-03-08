@@ -86,7 +86,7 @@ class MagicStepsNet(nn.Module):
             ])
             prev_dim = h
 
-        layers.append(nn.Linear(prev_dim, 1))
+        layers.append(nn.Linear(prev_dim, 3))
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -179,10 +179,7 @@ app = FastAPI(
         "3. Para processamento em lote use `POST /predict/batch` (até 500 alunos).\n\n"
         "### Pré-processamento interno\n"
         "Você **não** precisa normalizar nada. O `preprocessor.joblib` (MinMaxScaler + OrdinalEncoder) "
-        "é aplicado automaticamente antes da inferência do modelo.\n\n"
-        "### Limiar de classificação\n"
-        "O limiar padrão é **0.5**. Use `PUT /thresholds` para ajustá-lo "
-        "sem reiniciar a API."
+        "é aplicado automaticamente antes da inferência do modelo."
     ),
     version="2.0.0",
     docs_url="/docs",

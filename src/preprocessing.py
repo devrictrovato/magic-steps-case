@@ -13,7 +13,7 @@ from sklearn.preprocessing import MinMaxScaler, OrdinalEncoder
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from settings import data_config, settings, ARTIFACTS_DIR
+from settings import data_config, settings, OUTPUT_DIR
 from utils import setup_logger, FileManager
 
 
@@ -178,24 +178,75 @@ class DataTransformer:
     
     def map_target(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Mapeia variável target para valores numéricos.
-        
+        Mapeia variável target para valores numéricos (apenas quando target_map
+        não está vazio). Para targets já numéricos (ex: defasagem) esta etapa
+        é ignorada automaticamente.
+
         Args:
             df: DataFrame original
-        
+
         Returns:
             DataFrame com target mapeado
         """
         df = df.copy()
-        
-        if self.config.target_column in df.columns:
-            df[self.config.target_column] = df[self.config.target_column].map(
-                self.config.target_map
+
+        target_col = self.config.target_column
+        target_map = self.config.target_map
+
+        if target_col not in df.columns:
+            return df
+
+        if not target_map:
+            # Target já numérico — garantir dtype numérico.
+            # O bucketing ternário é feito em bucket_defasagem() logo a seguir.
+            df[target_col] = pd.to_numeric(df[target_col], errors="coerce")
+            self.logger.info(
+                f"Target '{target_col}' é numérico — mapeamento textual ignorado."
             )
-            self.logger.info("Target mapeado")
-        
+            return df
+
+        df[target_col] = df[target_col].map(target_map)
+        self.logger.info("Target mapeado")
         return df
     
+    def bucket_defasagem(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Converte a coluna numérica 'defasagem' em classes ternárias:
+            0 → atraso  (defasagem < 0)
+            1 → neutro  (defasagem == 0)
+            2 → avanço  (defasagem > 0)
+
+        A coluna original é substituída pelo bucket para ser usada como target
+        pelo DataBalancer e pelo modelo.
+
+        Args:
+            df: DataFrame com coluna 'defasagem' numérica
+
+        Returns:
+            DataFrame com 'defasagem' convertida em 0 / 1 / 2
+        """
+        df = df.copy()
+        target_col = self.config.target_column   # "defasagem"
+
+        if target_col not in df.columns:
+            self.logger.warning(f"Coluna '{target_col}' não encontrada para bucketing")
+            return df
+
+        raw = pd.to_numeric(df[target_col], errors="coerce")
+
+        df[target_col] = np.where(
+            raw < 0, 0,
+            np.where(raw == 0, 1, 2)
+        ).astype("int64")
+
+        counts = df[target_col].value_counts().sort_index()
+        labels = {0: "atraso", 1: "neutro", 2: "avanço"}
+        self.logger.info("Defasagem convertida em classes ternárias:")
+        for cls, cnt in counts.items():
+            self.logger.info(f"  Classe {cls} ({labels[cls]:>6}): {cnt:>4} amostras")
+
+        return df
+
     def handle_missing_values(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Trata valores ausentes.
@@ -236,76 +287,96 @@ class DataTransformer:
 # ============================================================
 
 class DataBalancer:
-    """Balanceador de dados para classes desbalanceadas."""
-    
+    """Balanceador de dados para classes desbalanceadas (suporta multiclasse)."""
+
     def __init__(self):
         self.logger = setup_logger(self.__class__.__name__)
         self.config = data_config
-    
+
     def balance_target(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Balanceia as classes do target usando oversampling sintético.
-        
+
+        Para classificação binária (0/1) o comportamento original é mantido.
+        Para classificação multiclasse, todas as classes minoritárias são
+        sobreamostradas até a contagem da classe majoritária.
+
         Args:
             df: DataFrame original
-        
+
         Returns:
             DataFrame balanceado
         """
         rng = np.random.default_rng(settings.random_state)
-        
         target_col = self.config.target_column
-        
-        df_major = df[df[target_col] == 0]
-        df_minor = df[df[target_col] == 1]
-        
-        self.logger.info(f"Classe majoritária: {len(df_major)}")
-        self.logger.info(f"Classe minoritária: {len(df_minor)}")
-        
-        if len(df_minor) >= len(df_major):
+
+        class_counts = df[target_col].value_counts()
+        n_majority = int(class_counts.max())
+        unique_classes = class_counts.index.tolist()
+
+        self.logger.info(f"Distribuição original das classes:\n{class_counts.to_string()}")
+        self.logger.info(f"Alvo de balanceamento: {n_majority} amostras por classe")
+
+        # Se todas as classes já têm a mesma contagem, não faz nada
+        if class_counts.nunique() == 1:
             self.logger.info("Dataset já está balanceado")
             return df
-        
-        n_new = len(df_major) - len(df_minor)
-        
-        numeric_cols = (
-            df_minor.select_dtypes(include=["int64", "float64"])
-            .columns.drop(target_col)
-        )
-        categorical_cols = df_minor.select_dtypes(include="object").columns
-        
-        synthetic_rows = []
-        
-        for _ in range(n_new):
-            row = {}
-            
-            # Gerar valores numéricos
-            for col in numeric_cols:
-                col_min, col_max = df_minor[col].min(), df_minor[col].max()
-                row[col] = (
-                    col_min
-                    if col_min == col_max
-                    else rng.uniform(col_min, col_max)
-                )
-            
-            # Gerar valores categóricos
-            for col in categorical_cols:
-                row[col] = rng.choice(df_minor[col].values)
-            
-            row[target_col] = 1
-            synthetic_rows.append(row)
-        
-        df_syn = pd.DataFrame(synthetic_rows)
-        df_balanced = pd.concat([df_major, df_minor, df_syn], ignore_index=True)
-        
-        # Embaralhar
+
+        # Para classificação binária legada (0/1): mantém comportamento anterior
+        # Para multiclasse: sobreamostra todas as classes até n_majority
+        balanced_parts = []
+
+        for cls in unique_classes:
+            df_cls = df[df[target_col] == cls]
+            n_cls = len(df_cls)
+            n_new = n_majority - n_cls
+
+            balanced_parts.append(df_cls)
+
+            if n_new <= 0:
+                continue  # já é a classe majoritária
+
+            numeric_cols = (
+                df_cls.select_dtypes(include=["int64", "float64"])
+                .columns
+                .drop(target_col, errors="ignore")
+            )
+            categorical_cols = df_cls.select_dtypes(include="object").columns
+
+            synthetic_rows = []
+            for _ in range(n_new):
+                row: dict = {}
+
+                for col in numeric_cols:
+                    col_min, col_max = float(df_cls[col].min()), float(df_cls[col].max())
+                    row[col] = (
+                        col_min
+                        if col_min == col_max
+                        else float(rng.uniform(col_min, col_max))
+                    )
+
+                for col in categorical_cols:
+                    row[col] = rng.choice(df_cls[col].values)
+
+                row[target_col] = cls
+                synthetic_rows.append(row)
+
+            if synthetic_rows:
+                balanced_parts.append(pd.DataFrame(synthetic_rows))
+
+            self.logger.info(
+                f"Classe {cls}: {n_cls} originais + {n_new} sintéticos = {n_majority}"
+            )
+
+        df_balanced = pd.concat(balanced_parts, ignore_index=True)
         df_balanced = df_balanced.sample(
             frac=1, random_state=settings.random_state
         ).reset_index(drop=True)
-        
-        self.logger.info(f"Dataset balanceado. Shape: {df_balanced.shape}")
-        self.logger.info(f"Amostras sintéticas criadas: {n_new}")
-        
+
+        self.logger.info(
+            f"Dataset balanceado. Shape: {df_balanced.shape} | "
+            f"Classes: {df_balanced[target_col].value_counts().to_dict()}"
+        )
         return df_balanced
 
 
@@ -331,8 +402,8 @@ class Preprocessor:
         Returns:
             ColumnTransformer configurado
         """
-        X = df.drop(columns=[self.config.target_column])
-        
+        X = df.drop(columns=[self.config.target_column], errors="ignore")
+
         numeric_features = [
             c
             for c in self.config.final_feature_order
@@ -374,14 +445,18 @@ class Preprocessor:
         Returns:
             Tupla (DataFrame transformado, preprocessador)
         """
-        X = df.drop(columns=[self.config.target_column])
+        X = df.drop(columns=[self.config.target_column], errors="ignore")
         y = df[self.config.target_column]
         
         self.transformer = self.build_preprocessor(df)
         X_transformed = self.transformer.fit_transform(X)
         
+        feature_names = self.transformer.get_feature_names_out()
+        feature_names = [name.split("__")[-1] for name in feature_names]
+
         df_transformed = pd.DataFrame(
-            X_transformed, columns=self.config.final_feature_order
+            X_transformed,
+            columns=feature_names
         )
         df_transformed[self.config.target_column] = y.values
         
@@ -464,6 +539,7 @@ class PreprocessingPipeline:
             .pipe(self.transformer.clean_strings)
             .pipe(self.transformer.drop_invalid_columns)
             .pipe(self.transformer.map_target)
+            .pipe(self.transformer.bucket_defasagem)
             .pipe(self.transformer.handle_missing_values)
         )
         
@@ -494,15 +570,15 @@ class PreprocessingPipeline:
         self, dataset: pd.DataFrame, preprocessor: ColumnTransformer
     ) -> None:
         """Salva artefatos do pipeline."""
-        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         
         # Salvar dataset
-        dataset_path = ARTIFACTS_DIR / "dataset_transformed_magic_steps.parquet"
+        dataset_path = OUTPUT_DIR / "dataset_transformed_magic_steps.parquet"
         dataset.to_parquet(dataset_path, index=False)
         self.logger.info(f"Dataset salvo em: {dataset_path}")
         
         # Salvar preprocessador
-        preprocessor_path = ARTIFACTS_DIR / "preprocessor.joblib"
+        preprocessor_path = OUTPUT_DIR / "preprocessor.joblib"
         joblib.dump(preprocessor, preprocessor_path)
         self.logger.info(f"Preprocessador salvo em: {preprocessor_path}")
     
@@ -513,10 +589,13 @@ class PreprocessingPipeline:
         
         target_col = data_config.target_column
         if target_col in dataset.columns:
-            self.logger.info("\nDistribuição do target:")
-            dist = dataset[target_col].value_counts(normalize=True)
-            for val, pct in dist.items():
-                self.logger.info(f"  Classe {val}: {pct:.2%}")
+            labels = data_config.defasagem_class_labels
+            self.logger.info(f"\nDistribuição do target '{target_col}' (após balanceamento):")
+            counts = dataset[target_col].value_counts().sort_index()
+            for val, cnt in counts.items():
+                pct = cnt / len(dataset)
+                label = labels.get(int(val), str(val))
+                self.logger.info(f"  Classe {val} ({label:>6}): {cnt:>4} amostras ({pct:.1%})")
 
 
 # ============================================================

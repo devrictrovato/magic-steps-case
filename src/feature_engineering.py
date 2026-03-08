@@ -14,7 +14,7 @@ from feast.value_type import ValueType
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from settings import data_config, feast_config, FEAST_REPO_DIR, ARTIFACTS_DIR
+from settings import data_config, feast_config, FEAST_REPO_DIR, OUTPUT_DIR
 from utils import setup_logger
 
 
@@ -225,10 +225,10 @@ class FeatureEngineer:
         """
         df = df.copy()
         
-        # Razão avaliações por defasagem
-        if "num_avaliacoes" in df.columns and "defasagem" in df.columns:
-            df["ratio_aval_defasagem"] = df["num_avaliacoes"] / (
-                df["defasagem"] + 1
+        # Razão avaliações por fase (defasagem é agora o target, não feature)
+        if "num_avaliacoes" in df.columns and "fase" in df.columns:
+            df["ratio_aval_fase"] = df["num_avaliacoes"] / (
+                df["fase"] + 1
             )  # +1 para evitar divisão por zero
         
         self.logger.info("Features de razão criadas")
@@ -247,7 +247,7 @@ class FeatureEngineer:
         df = df.copy()
         
         # Features importantes para criar versões quadráticas
-        poly_cols = ["score_inde", "idade", "num_avaliacoes"]
+        poly_cols = ["score_inde", "num_avaliacoes"]  # idade removida
         
         for col in poly_cols:
             if col in df.columns:
@@ -269,11 +269,13 @@ class FeatureEngineer:
         df = df.copy()
         
         # Interações importantes
-        if "score_inde" in df.columns and "idade" in df.columns:
-            df["inde_x_idade"] = df["score_inde"] * df["idade"]
+        # inde_x_idade removido — idade não é mais feature
+        if "score_inde" in df.columns and "fase" in df.columns:
+            df["inde_x_fase"] = df["score_inde"] * df["fase"]
         
-        if "num_avaliacoes" in df.columns and "defasagem" in df.columns:
-            df["aval_x_defasagem"] = df["num_avaliacoes"] * df["defasagem"]
+        # defasagem é o target — não usada como feature de interação
+        if "num_avaliacoes" in df.columns and "fase" in df.columns:
+            df["aval_x_fase"] = df["num_avaliacoes"] * df["fase"]
         
         self.logger.info("Features de interação criadas")
         return df
@@ -363,7 +365,7 @@ class FeatureLoader:
         Returns:
             DataFrame com features
         """
-        dataset_path = ARTIFACTS_DIR / "dataset_transformed_magic_steps.parquet"
+        dataset_path = OUTPUT_DIR / "dataset_transformed_magic_steps.parquet"
         
         if not dataset_path.exists():
             raise FileNotFoundError(
@@ -503,7 +505,7 @@ if __name__ == "__main__":
         df_engineered = engineer.engineer_features(df)
         
         # Salvar features engineered
-        engineered_path = ARTIFACTS_DIR / "dataset_with_engineered_features.parquet"
+        engineered_path = OUTPUT_DIR / "dataset_with_engineered_features.parquet"
         df_engineered.to_parquet(engineered_path, index=False)
         print(f"\n✅ Features engineered salvas em: {engineered_path}")
         
