@@ -8,12 +8,14 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Dependências mínimas do sistema (REMOVIDO mongodb e redis)
+# Atualiza certificados SSL e dependências mínimas
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgomp1 \
     gcc \
     g++ \
+    ca-certificates \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Diretório da aplicação
@@ -24,23 +26,33 @@ COPY requirements.txt .
 
 # Atualiza pip e instala dependências
 RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install certifi
 
 # PYTHONPATH para imports planos
-# include project root, the app package, and src helpers so modules can be imported
 ENV PYTHONPATH=/app/app:/app:/app/src
 
-# Variáveis de ambiente (usar serviços externos no Render)
+# =============================
+# Variáveis de ambiente
+# =============================
+
 ENV REDIS_HOST=redis
 ENV REDIS_PORT=6379
-ENV MONGO_URI=mongodb+srv://dbuser:6r2jt27yAF7Sn4ZH@cluster-magic-steps.ksobi7u.mongodb.net/?appName=cluster-magic-steps
+
+# URI corrigida MongoDB Atlas
+ENV MONGO_URI="mongodb+srv://dbuser:6r2jt27yAF7Sn4ZH@cluster-magic-steps.ksobi7u.mongodb.net/magic_steps_logs?retryWrites=true&w=majority&tls=true"
+
 ENV MONGO_DB=magic_steps_logs
 
+# =============================
 # Código da API
+# =============================
+
 COPY app/context.py app/
 COPY app/main.py    app/
 COPY app/routes.py  app/
-# incluir código auxiliar que vive em src
+
+# incluir código auxiliar
 COPY src/ src/
 
 # Artefatos do modelo
@@ -54,5 +66,8 @@ COPY .env* .
 ENV PORT=8000
 EXPOSE 8000
 
-# Apenas sobe a API
+# =============================
+# Inicialização da API
+# =============================
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

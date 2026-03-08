@@ -195,46 +195,66 @@ try:
 except ImportError:  # pymongo may not be installed during tests
     _PymongoClient = None
 
+import certifi
 
 class MongoLogger:
     """Cliente simples para gravar logs de predição em MongoDB."""
 
     def __init__(self, uri: str | None = None, db_name: str | None = None):
         from settings import settings
+        import logging
 
         self.uri = uri or settings.mongo_uri
         self.db_name = db_name or settings.mongo_db
-        self.logger = setup_logger(self.__class__.__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
 
         if _PymongoClient is None:
             self.logger.warning("pymongo não instalado, MongoLogger ficará inoperante")
             self.client = None
             self.db = None
-        else:
-            try:
-                self.client = _PymongoClient(
-                    self.uri,
-                    serverSelectionTimeoutMS=5_000,
-                    connectTimeoutMS=5_000,
-                    socketTimeoutMS=10_000,
-                    tls=True,
-                    tlsAllowInvalidCertificates=True,
-                )
-                # Valida conectividade imediatamente
-                self.client.admin.command("ping")
-                self.db = self.client[self.db_name]
-            except Exception as e:
-                self.logger.error(f"Erro ao conectar MongoDB: {e}")
-                self.client = None
-                self.db = None
+            return
+
+        try:
+            self.client = _PymongoClient(
+                self.uri,
+
+                # timeouts maiores (cloud)
+                serverSelectionTimeoutMS=30000,
+                connectTimeoutMS=30000,
+                socketTimeoutMS=30000,
+
+                # TLS correto para MongoDB Atlas
+                tls=True,
+                tlsCAFile=certifi.where(),
+
+                # estabilidade
+                retryWrites=True,
+                appname="magic-steps-api",
+            )
+
+            # força conexão imediata
+            self.client.admin.command("ping")
+
+            self.db = self.client[self.db_name]
+
+            self.logger.info("Conectado ao MongoDB com sucesso")
+
+        except Exception as e:
+            self.logger.error(f"Erro ao conectar MongoDB: {e}")
+            self.client = None
+            self.db = None
 
     def log_prediction(self, record: dict) -> None:
         """Insere um documento na coleção `predictions`."""
+
         if self.db is None:
+            self.logger.debug("MongoDB não disponível, log ignorado")
             return
+
         try:
             self.db.predictions.insert_one(record)
             self.logger.debug("log de predição gravado em MongoDB")
+
         except Exception as e:
             self.logger.error(f"falha ao inserir log de predição: {e}")
 
