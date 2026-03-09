@@ -1,29 +1,59 @@
 {
   "metrics": {
-    "accuracy": 0.9752342704149933,
-    "precision": 0.9528061224489796,
-    "recall": 1.0,
-    "f1_score": 0.9758327890267798,
-    "roc_auc": 0.9986487673137888
+    "accuracy": 0.9828064337215752,
+    "balanced_accuracy": 0.9828064337215752,
+    "precision_weighted": 0.9831928890860037,
+    "recall_weighted": 0.9828064337215752,
+    "f1_weighted": 0.9828011840975341,
+    "f1_macro": 0.982801184097534,
+    "cohen_kappa": 0.9742096505823628,
+    "mcc": 0.974407950898999,
+    "log_loss": 0.04432547060398558,
+    "top2_accuracy": 1.0,
+    "roc_auc_ovr_weighted": 0.9993826152197807,
+    "roc_auc_ovr_macro": 0.9993826152197807,
+    "precision_atraso": 1.0,
+    "recall_atraso": 1.0,
+    "f1_atraso": 1.0,
+    "precision_neutro": 0.9581993569131833,
+    "recall_neutro": 0.9916805324459235,
+    "f1_neutro": 0.9746524938675388,
+    "precision_avanco": 0.9913793103448276,
+    "recall_avanco": 0.956738768718802,
+    "f1_avanco": 0.9737510584250635
   },
   "confusion_matrix": [
     [
-      710,
-      37
+      601,
+      0,
+      0
     ],
     [
       0,
-      747
+      596,
+      5
+    ],
+    [
+      0,
+      26,
+      575
     ]
   ],
-  "classification_report": "              precision    recall  f1-score   support\n\n Não Atingiu       1.00      0.95      0.97       747\n     Atingiu       0.95      1.00      0.98       747\n\n    accuracy                           0.98      1494\n   macro avg       0.98      0.98      0.98      1494\nweighted avg       0.98      0.98      0.98      1494\n",
+  "classification_report": "              precision    recall  f1-score   support\n\n      atraso       1.00      1.00      1.00       601\n      neutro       0.96      0.99      0.97       601\n      avanco       0.99      0.96      0.97       601\n\n    accuracy                           0.98      1803\n   macro avg       0.98      0.98      0.98      1803\nweighted avg       0.98      0.98      0.98      1803\n",
   "model_params": {
     "hidden_layers": [
+      256,
+      128,
       64
     ],
-    "dropout": 0.2,
+    "dropout": 0.1,
     "lr": 0.01,
     "batch_size": 64,
     "epochs": 100
-  }
+  },
+  "class_labels": [
+    "atraso",
+    "neutro",
+    "avanco"
+  ]
 }

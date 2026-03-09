@@ -1,50 +1,31 @@
-# =============================================================
-# Dockerfile — Magic Steps Prediction API (Render | CPU)
-# =============================================================
-
+# ============================================================
+# Magic Steps MLOps — Dockerfile
+# ============================================================
 FROM python:3.10-slim
 
-# Evita .pyc e melhora logs no Render
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Dependências mínimas do sistema (scikit-learn, scipy, psycopg2)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    libgomp1 \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# Diretório da aplicação
 WORKDIR /app
 
-# Copia apenas requirements primeiro (melhor cache)
+# ── dependências do sistema ───────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── dependências Python ───────────────────────────────────────
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Atualiza pip e instala dependências
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+# ── código da aplicação ───────────────────────────────────────
+COPY . .
 
-# PYTHONPATH para imports planos
-ENV PYTHONPATH=/app/app
+# ── variáveis de ambiente padrão (sobrescritas pelo .env) ─────
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DATABASE_URL=postgresql://db_magic_steps_user:0hT1fLv2GkMb4McXAhZeUBAJUTgQtSLV@dpg-d6mo2hlm5p6s73fv0dt0-a.virginia-postgres.render.com/db_magic_steps
 
-# Código da API (mantendo estrutura original)
-COPY app/context.py app/
-COPY app/main.py    app/
-COPY app/routes.py  app/
-
-# Artefatos do modelo
-COPY app/model/model_magic_steps_dl.pt app/model/
-COPY out/preprocessor.joblib out/
-
-# .env opcional
-COPY .env* .
-
-# Porta padrão Render
-ENV PORT=8000
 EXPOSE 8000
 
-# Processo único (Render-friendly)
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --log-level info"]
+# ── healthcheck ───────────────────────────────────────────────
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

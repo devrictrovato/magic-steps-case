@@ -1,0 +1,375 @@
+2026-03-08 11:54:22 - PreprocessingPipeline - INFO - ============================================================
+2026-03-08 11:54:22 - PreprocessingPipeline - INFO - INICIANDO PIPELINE DE PRÉ-PROCESSAMENTO
+2026-03-08 11:54:22 - PreprocessingPipeline - INFO - Run ID: 975e6265-22b9-4d28-b7db-7564caf9b2cb
+2026-03-08 11:54:22 - PreprocessingPipeline - INFO - ============================================================
+2026-03-08 11:54:22 - DataExtractor - INFO - Extraindo dados de: data\BASE DE DADOS PEDE 2024 - DATATHON.xlsx    
+2026-03-08 11:54:26 - DataExtractor - INFO - Dados extraídos. Shape: (860, 42)
+2026-03-08 11:56:41 - DataExtractor - INFO - ✅ 860 linhas brutas persistidas no PostgreSQL (raw_student_data).
+2026-03-08 11:56:41 - DataTransformer - INFO - Colunas selecionadas e renomeadas: (860, 25)
+2026-03-08 11:56:42 - DataTransformer - INFO - Colunas de pedra consolidadas
+2026-03-08 11:56:42 - DataTransformer - INFO - Strings limpas
+2026-03-08 11:56:42 - DataTransformer - INFO - Colunas removidas: ['nota_ingles', 'nota_matematica', 'nota_portugues', 'flag_atingiu_pv', 'ano_nascimento', ']
+2026-03-08 11:56:42 - DataTransformer - INFO - Target 'defasagem' é numérico — mapeamento textual ignorado.
+2026-03-08 11:56:42 - DataTransformer - INFO - Defasagem convertida em classes ternárias:
+2026-03-08 11:56:42 - DataTransformer - INFO -   Classe 0 (atraso):  601 amostras
+2026-03-08 11:56:42 - DataTransformer - INFO -   Classe 1 (neutro):  247 amostras
+defasagem
+0    601
+1    247
+2     12
+2026-03-08 11:56:42 - DataBalancer - INFO - Classe 1: 247 originais + 354 sintéticos = 601
+2026-03-08 11:56:43 - DataBalancer - INFO - Classe 2: 12 originais + 589 sintéticos = 601
+2026-03-08 11:56:43 - DataBalancer - INFO - Dataset balanceado. Shape: (1803, 17)
+2026-03-08 11:56:43 - Preprocessor - INFO - Features numéricas: 13
+2026-03-08 11:56:43 - Preprocessor - INFO - Features categóricas: 3
+2026-03-08 11:56:43 - Preprocessor - INFO - Transformação concluída. Shape: (1803, 17)
+2026-03-08 11:56:45 - PreprocessingPipeline - INFO - Dataset salvo em: E:\Repos\magic-steps-case\out\dataset_transformed_magic_steps.parquet
+2026-03-08 11:56:45 - PreprocessingPipeline - INFO - Preprocessador salvo em: E:\Repos\magic-steps-case\out\preprocessor.joblib
+2026-03-08 12:01:22 - PreprocessingPipeline - INFO - ✅ 1803 features engenheiradas persistidas no PostgreSQL (engineered_features).
+2026-03-08 12:01:22 - PreprocessingPipeline - INFO -
+2026-03-08 12:01:22 - PreprocessingPipeline - INFO - Colunas: ['fase', 'ano_ingresso', 'score_inde', 'score_iaa', 'score_ieg', 'score_ips', 'score_ida', 'score_ipv', 'score_ian', 'nota_cg', 'nota_cf', 'nota_ct', 'num_avaliacoes', 'turma', 'genero', 'pedra_modal', 'defasagem']
+2026-03-08 12:01:22 - PreprocessingPipeline - INFO -
+Distribuição do target 'defasagem':
+2026-03-08 12:01:22 - PreprocessingPipeline - INFO -   Classe 0 (atraso):  601 amostras (33.3%)
+2026-03-08 12:01:22 - PreprocessingPipeline - INFO -   Classe 1 (neutro):  601 amostras (33.3%)
+2026-03-08 12:01:22 - PreprocessingPipeline - INFO -   Classe 2 (avanço):  601 amostras (33.3%)
+2026-03-08 12:01:23 - PreprocessingPipeline - INFO - ============================================================
+2026-03-08 12:01:23 - PreprocessingPipeline - INFO - PIPELINE CONCLUÍDO COM SUCESSO!
+2026-03-08 12:01:23 - PreprocessingPipeline - INFO - ============================================================
+
+✅ Pipeline finalizado com sucesso!
+
+
+
+🎯 Feature Engineering com PostgreSQL — Magic Steps
+2026-03-08 12:06:03 - FeatureLoader - INFO - Carregando features do PostgreSQL…
+2026-03-08 12:06:07 - FeatureLoader - INFO - Features carregadas do PostgreSQL. Shape: (1803, 24)
+2026-03-08 12:06:07 - FeatureEngineer - INFO - Features agregadas criadas
+2026-03-08 12:06:07 - FeatureEngineer - INFO - Features de razão criadas
+2026-03-08 12:06:07 - FeatureEngineer - INFO - Features polinomiais criadas
+2026-03-08 12:06:07 - FeatureEngineer - INFO - Features de interação criadas
+2026-03-08 12:06:07 - FeatureEngineer - INFO - Feature engineering concluído. Shape: (1803, 24)
+
+✅ Features salvas localmente em: E:\Repos\magic-steps-case\out\dataset_with_engineered_features.parquet
+2026-03-08 12:06:07 - FeatureStoreManager - INFO - Materializando features no PostgreSQL (run_id=8074c603-aeb0-46dc-8fe0-4de0b37f80a0)…4de0b37f80a0)…
+2026-03-08 12:10:43 - FeatureStoreManager - INFO - ✅ 1803 features materializadas no PostgreSQL.
+✅ Features materializadas no PostgreSQL (run_id=8074c603-aeb0-46dc-8fe0-4de0b37f80a0)
+
+✅ Feature engineering finalizado!
+
+
+
+🏆 Melhores parâmetros: {'hidden_layers': [128, 64], 'dropout': 0.3, 'lr': 0.001, 'batch_size': 64, 'epochs': 100}
+INFO:GridSearchCV:
+🏆 Melhores parâmetros: {'hidden_layers': [128, 64], 'dropout': 0.3, 'lr': 0.001, 'batch_size': 64, 'epochs': 100}
+2026-03-08 15:49:22 - TrainingPipeline - INFO - 
+🧠 Treinando modelo final...
+INFO:TrainingPipeline:
+🧠 Treinando modelo final...
+2026-03-08 15:49:24 - TrainingPipeline - INFO - Época 10/100 - Loss: 0.1752
+INFO:TrainingPipeline:Época 10/100 - Loss: 0.1752
+2026-03-08 15:49:26 - TrainingPipeline - INFO - Época 20/100 - Loss: 0.1831
+INFO:TrainingPipeline:Época 20/100 - Loss: 0.1831
+2026-03-08 15:49:28 - TrainingPipeline - INFO - Época 30/100 - Loss: 0.1115
+INFO:TrainingPipeline:Época 30/100 - Loss: 0.1115
+2026-03-08 15:49:30 - TrainingPipeline - INFO - Época 40/100 - Loss: 0.1028
+INFO:TrainingPipeline:Época 40/100 - Loss: 0.1028
+2026-03-08 15:49:31 - TrainingPipeline - INFO - Época 50/100 - Loss: 0.1006
+INFO:TrainingPipeline:Época 50/100 - Loss: 0.1006
+2026-03-08 15:49:33 - TrainingPipeline - INFO - Época 60/100 - Loss: 0.1175
+INFO:TrainingPipeline:Época 60/100 - Loss: 0.1175
+2026-03-08 15:49:35 - TrainingPipeline - INFO - Época 70/100 - Loss: 0.0978
+INFO:TrainingPipeline:Época 70/100 - Loss: 0.0978
+2026-03-08 15:49:36 - TrainingPipeline - INFO - Época 80/100 - Loss: 0.0853
+INFO:TrainingPipeline:Época 80/100 - Loss: 0.0853
+2026-03-08 15:49:38 - TrainingPipeline - INFO - Época 90/100 - Loss: 0.0930
+INFO:TrainingPipeline:Época 90/100 - Loss: 0.0930
+2026-03-08 15:49:40 - TrainingPipeline - INFO - Época 100/100 - Loss: 0.0780
+_dl.pt
+INFO:TrainingPipeline:💾 Modelo salvo em: E:\Repos\magic-steps-case\app\model\model_magic_steps_dl.pt
+2026-03-08 15:49:41 - ModelRegistry - INFO - Metadados salvos em E:\Repos\magic-steps-case\app\model\model_magic_steps_dl_metadata.json_metadata.json
+INFO:ModelRegistry:Metadados salvos em E:\Repos\magic-steps-case\app\model\model_magic_steps_dl_metadata.json
+2026-03-08 15:49:44 - TrainingPipeline - INFO - ============================================================
+INFO:TrainingPipeline:============================================================
+2026-03-08 15:49:44 - TrainingPipeline - INFO - TREINAMENTO CONCLUÍDO COM SUCESSO!
+INFO:TrainingPipeline:TREINAMENTO CONCLUÍDO COM SUCESSO!
+2026-03-08 15:49:44 - TrainingPipeline - INFO - ============================================================
+INFO:TrainingPipeline:============================================================
+
+✅ Treinamento finalizado!
+
+
+
+🔍 Avaliando modelo — Magic Steps
+2026-03-08 15:56:57 - Evaluator - INFO - ============================================================
+2026-03-08 15:56:57 - Evaluator - INFO - INICIANDO AVALIAÇÃO DO MODELO
+2026-03-08 15:56:57 - Evaluator - INFO - ============================================================
+2026-03-08 15:56:57 - ModelLoader - INFO - Carregando modelo de: E:\Repos\magic-steps-case\app\model\model_magic_steps_dl.pt
+2026-03-08 15:56:57 - ModelLoader - INFO - Modelo carregado.
+2026-03-08 15:56:57 - EvaluationDataLoader - INFO - Carregando dataset…
+2026-03-08 15:56:57 - FeatureLoader - INFO - Carregando features do PostgreSQL…
+2026-03-08 15:57:01 - FeatureLoader - INFO - Features carregadas do PostgreSQL. Shape: (1803, 17)
+2026-03-08 15:57:01 - EvaluationDataLoader - INFO - Dataset: X=(1803, 16), y=(1803,)
+2026-03-08 15:57:01 - MetricsCalculator - INFO -
+============================================================
+2026-03-08 15:57:01 - MetricsCalculator - INFO - MÉTRICAS DE AVALIAÇÃO
+2026-03-08 15:57:01 - MetricsCalculator - INFO - ============================================================
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   accuracy                        : 0.9850
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   balanced_accuracy               : 0.9850
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   precision_weighted              : 0.9852
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   recall_weighted                 : 0.9850
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   f1_weighted                     : 0.9850
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   f1_macro                        : 0.9850
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   cohen_kappa                     : 0.9775
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   mcc                             : 0.9776
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   log_loss                        : 0.0443
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   top2_accuracy                   : 1.0000
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   roc_auc_ovr_weighted            : 0.9992
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   roc_auc_ovr_macro               : 0.9992
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   precision_atraso                : 1.0000
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   recall_atraso                   : 1.0000
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   f1_atraso                       : 1.0000
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   precision_neutro                : 0.9898
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   recall_neutro                   : 0.9651
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   f1_neutro                       : 0.9773
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   precision_avanco                : 0.9659
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   recall_avanco                   : 0.9900
+2026-03-08 15:57:01 - MetricsCalculator - INFO -   f1_avanco                       : 0.9778
+2026-03-08 15:57:01 - Evaluator - INFO -
+RELATÓRIO DE CLASSIFICAÇÃO
+              precision    recall  f1-score   support
+
+      atraso       1.00      1.00      1.00       601
+      neutro       0.99      0.97      0.98       601
+      avanco       0.97      0.99      0.98       601
+
+    accuracy                           0.99      1803
+   macro avg       0.99      0.99      0.99      1803
+weighted avg       0.99      0.99      0.99      1803
+
+2026-03-08 15:57:01 - Evaluator - INFO -
+────────────────────────────────────────────────────────────
+2026-03-08 15:57:01 - Evaluator - INFO - CROSS-VALIDATION + ANÁLISE DE OVERFITTING
+2026-03-08 15:57:01 - Evaluator - INFO - ────────────────────────────────────────────────────────────
+2026-03-08 15:57:01 - CrossValidator - INFO -
+🔁 Cross-validation 5-fold estratificado…
+2026-03-08 15:57:11 - CrossValidator - INFO -   Fold 1/5 — val_acc=0.961  val_f1=0.961  gap_acc=+0.011  gap_f1=+0.011    
+2026-03-08 15:57:17 - CrossValidator - INFO -   Fold 2/5 — val_acc=0.967  val_f1=0.967  gap_acc=+0.005  gap_f1=+0.005    
+2026-03-08 15:57:24 - CrossValidator - INFO -   Fold 3/5 — val_acc=0.967  val_f1=0.967  gap_acc=+0.011  gap_f1=+0.011    
+2026-03-08 15:57:31 - CrossValidator - INFO -   Fold 4/5 — val_acc=0.961  val_f1=0.961  gap_acc=+0.016  gap_f1=+0.016
+2026-03-08 15:57:38 - CrossValidator - INFO -   Fold 5/5 — val_acc=0.953  val_f1=0.953  gap_acc=+0.029  gap_f1=+0.029
+2026-03-08 15:57:38 - CrossValidator - INFO - 
+📊 CV Summary: {'val_acc_mean': 0.96174, 'val_acc_std': 0.005134822294880325, 'val_f1_mean': 0.96164, 'val_f1_std': 0.005200615348206399, 'val_auc_mean': 0.99542, 'val_auc_std': 0.002260442434568929, 'gap_acc_mean': 0.01426, 'gap_acc_std': 0.007956783269638555, 'gap_f1_mean': 0.01434, 'gap_f1_std': 0.007996649298299883}
+2026-03-08 15:57:38 - CrossValidator - INFO - ⚖️  Overfitting: [SAUDÁVEL] Sem evidências de overfitting severo (gap acc=1
+.43%, gap F1=1.43%). O modelo generaliza de forma adequada.
+2026-03-08 15:57:38 - Visualizer - INFO -
+Salvando figuras em: E:\Repos\magic-steps-case\out\imgs
+2026-03-08 15:57:40 - Visualizer - INFO -   salvo: 01_confusion_matrix.png
+2026-03-08 15:57:41 - Visualizer - INFO -   salvo: 02_roc_curves_ovr.png
+2026-03-08 15:57:41 - Visualizer - INFO -   salvo: 03_precision_recall_curves.png
+2026-03-08 15:57:42 - Visualizer - INFO -   salvo: 04_metrics_radar.png
+2026-03-08 15:57:45 - Visualizer - INFO -   salvo: 05_class_probabilities.png
+2026-03-08 15:57:46 - Visualizer - INFO -   salvo: 06_calibration_curve.png
+2026-03-08 15:57:46 - Visualizer - INFO -   salvo: 07_per_class_metrics.png
+2026-03-08 15:57:47 - Visualizer - INFO -   salvo: 08_prediction_confidence.png
+2026-03-08 15:57:48 - Visualizer - INFO -   salvo: 09_error_analysis.png
+2026-03-08 15:57:49 - Visualizer - INFO -   salvo: 10_summary_dashboard.png
+2026-03-08 15:57:50 - Visualizer - INFO -   salvo: 11_cv_scores.png
+2026-03-08 15:57:51 - Visualizer - INFO -   salvo: 12_train_val_gap.png
+2026-03-08 15:57:51 - Visualizer - INFO -   Gerando curva de aprendizado (pode demorar alguns minutos)
+
+
+
+=================================================================== test session starts ===================================================================
+platform win32 -- Python 3.10.9, pytest-9.0.2, pluggy-1.6.0 -- e:\Repos\magic-steps-case\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: E:\Repos\magic-steps-case
+plugins: anyio-4.12.1, typeguard-4.4.4
+collected 61 items
+
+tests/test_preprocessing.py::TestExtractData::test_csv_leitura PASSED                                                                                [  1%]
+tests/test_preprocessing.py::TestExtractData::test_xlsx_leitura PASSED                                                                               [  3%]
+tests/test_preprocessing.py::TestExtractData::test_formato_nao_suportado PASSED                                                                      [  4%]
+tests/test_preprocessing.py::TestSelectAndRename::test_colunas_renomeadas PASSED                                                                     [  6%]
+tests/test_preprocessing.py::TestSelectAndRename::test_nao_modifica_original PASSED                                                                  [  8%]
+tests/test_preprocessing.py::TestSelectAndRename::test_tamanho_preservado PASSED                                                                     [  9%]
+tests/test_preprocessing.py::TestSelectAndRename::test_valores_preservados PASSED                                                                    [ 11%]
+tests/test_preprocessing.py::TestConsolidatePedra::test_modo_correto_consenso PASSED                                                                 [ 13%]
+tests/test_preprocessing.py::TestConsolidatePedra::test_todas_nan_retorna_nan PASSED                                                                 [ 14%]
+tests/test_preprocessing.py::TestConsolidatePedra::test_uma_pedra_presente PASSED                                                                    [ 16%]
+tests/test_preprocessing.py::TestConsolidatePedra::test_colunas_pedra_removidas PASSED                                                               [ 18%]
+tests/test_preprocessing.py::TestConsolidatePedra::test_nao_modifica_original PASSED                                                                 [ 19%]
+tests/test_preprocessing.py::TestCleanStrings::test_lower_e_strip PASSED                                                                             [ 21%]
+tests/test_preprocessing.py::TestCleanStrings::test_colunas_numericas_intactas PASSED                                                                [ 22%]
+tests/test_preprocessing.py::TestCleanStrings::test_nao_modifica_original PASSED                                                                     [ 24%]
+tests/test_preprocessing.py::TestDropInvalidColumns::test_remove_colunas_proibidas PASSED                                                            [ 26%]
+tests/test_preprocessing.py::TestDropInvalidColumns::test_sem_colunas_proibidas_nao_falha PASSED                                                     [ 27%]
+tests/test_preprocessing.py::TestDropInvalidColumns::test_remove_apenas_as_proibidas PASSED                                                          [ 29%]
+tests/test_preprocessing.py::TestMapTarget::test_mapeamento_numerico_preservado PASSED                                                               [ 31%]
+tests/test_preprocessing.py::TestMapTarget::test_valor_nao_numerico_gera_nan PASSED                                                                  [ 32%]
+tests/test_preprocessing.py::TestMapTarget::test_bucket_defasagem_classes_ternarias PASSED                                                           [ 34%]
+tests/test_preprocessing.py::TestMapTarget::test_bucket_defasagem_apenas_negativos PASSED                                                            [ 36%]
+tests/test_preprocessing.py::TestMapTarget::test_bucket_defasagem_apenas_positivos PASSED                                                            [ 37%]
+tests/test_preprocessing.py::TestMapTarget::test_nao_modifica_original PASSED                                                                        [ 39%]
+tests/test_preprocessing.py::TestBalanceTarget::test_balance_gera_igual PASSED                                                                       [ 40%]
+tests/test_preprocessing.py::TestBalanceTarget::test_balance_total_correto PASSED                                                                    [ 42%]
+tests/test_preprocessing.py::TestBalanceTarget::test_sintéticos_dentro_dos_limites PASSED                                                            [ 44%]
+tests/test_preprocessing.py::TestBalanceTarget::test_já_balanceado_sem_alteração PASSED                                                              [ 45%]
+tests/test_preprocessing.py::TestBalanceTarget::test_determinismo PASSED                                                                             [ 47%]
+tests/test_preprocessing.py::TestBalanceTarget::test_categoricas_sintéticas_válidas PASSED                                                           [ 49%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_retorna_column_transformer PASSED                                                           [ 50%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_dois_transformadores PASSED                                                                 [ 52%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_num_é_minmaxscaler PASSED                                                                   [ 54%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_cat_é_ordinalencoder PASSED                                                                 [ 55%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_remainder_drop PASSED                                                                       [ 57%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_fit_transform_shape PASSED                                                                  [ 59%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_fit_transform_range_numericas PASSED                                                        [ 60%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_colunas_numericas_corretas PASSED                                                           [ 62%]
+tests/test_preprocessing.py::TestBuildPreprocessor::test_colunas_categoricas_corretas PASSED                                                         [ 63%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_n_features_in PASSED                                                                       [ 65%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_output_dim PASSED                                                                          [ 67%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_remainder_drop PASSED                                                                      [ 68%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_idade_nao_esta_nas_features PASSED                                                         [ 70%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_defasagem_nao_esta_nas_features PASSED                                                     [ 72%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_min_fase_é_zero PASSED                                                                     [ 73%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_max_nota_cg_é_862 PASSED                                                                   [ 75%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_min_fase_e_zero PASSED                                                                     [ 77%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_categorias_turma PASSED                                                                    [ 78%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_categorias_genero PASSED                                                                   [ 80%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_categorias_pedra_modal PASSED                                                              [ 81%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_shape PASSED                                                                     [ 83%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_valores_min_produzem_zero PASSED                                                 [ 85%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_valores_max_produzem_um PASSED                                                   [ 86%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_ordinal_menina_é_zero PASSED                                                     [ 88%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_ordinal_menino_é_um PASSED                                                       [ 90%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_ordinal_turma_b_é_um PASSED                                                      [ 91%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_ordinal_pedra_topazio_é_dois PASSED                                              [ 93%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_nota_cg_meio_range PASSED                                                        [ 95%] 
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_ano_ingresso_normalizado PASSED                                                  [ 96%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_batch_shape PASSED                                                               [ 98%]
+tests/test_preprocessing.py::TestPreprocessorJoblib::test_transform_batch_consistente PASSED                                                         [100%]
+
+=================================================================== 61 passed in 13.24s ===================================================================
+
+=================================================================== test session starts ===================================================================
+platform win32 -- Python 3.10.9, pytest-9.0.2, pluggy-1.6.0 -- e:\Repos\magic-steps-case\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: E:\Repos\magic-steps-case
+plugins: anyio-4.12.1, typeguard-4.4.4
+collected 83 items
+
+tests/test_model.py::TestMagicStepsNet::test_instancia PASSED                                                                                        [  1%]
+tests/test_model.py::TestMagicStepsNet::test_forward_single PASSED                                                                                   [  2%]
+tests/test_model.py::TestMagicStepsNet::test_forward_batch PASSED                                                                                    [  3%]
+tests/test_model.py::TestMagicStepsNet::test_forward_dtype_float32 PASSED                                                                            [  4%]
+tests/test_model.py::TestMagicStepsNet::test_softmax_range PASSED                                                                                    [  6%]
+tests/test_model.py::TestMagicStepsNet::test_eval_determinismo PASSED                                                                                [  7%]
+tests/test_model.py::TestMagicStepsNet::test_train_dropout_variabilidade PASSED                                                                      [  8%]
+tests/test_model.py::TestMagicStepsNet::test_ultima_camada_linear PASSED                                                                             [  9%]
+tests/test_model.py::TestMagicStepsNet::test_hidden_layers_contagem PASSED                                                                           [ 10%]
+tests/test_model.py::TestMagicStepsNet::test_hidden_layers_single PASSED                                                                             [ 12%]
+tests/test_model.py::TestMagicStepsNet::test_hidden_layers_tres PASSED                                                                               [ 13%]
+tests/test_model.py::TestMagicStepsNet::test_checkpoint_round_trip PASSED                                                                            [ 14%]
+tests/test_model.py::TestMagicStepsNet::test_checkpoint_campos_obrigatórios PASSED                                                                   [ 15%]
+tests/test_model.py::TestMagicStepsDataset::test_len PASSED                                                                                          [ 16%]
+tests/test_model.py::TestMagicStepsDataset::test_getitem_retorna_tupla PASSED                                                                        [ 18%]
+tests/test_model.py::TestMagicStepsDataset::test_getitem_shapes PASSED                                                                               [ 19%]
+tests/test_model.py::TestMagicStepsDataset::test_getitem_dtype PASSED                                                                                [ 20%]
+tests/test_model.py::TestMagicStepsDataset::test_valores_preservados PASSED                                                                          [ 21%]
+tests/test_model.py::TestMagicStepsDataset::test_dataloader_batch PASSED                                                                             [ 22%]
+tests/test_model.py::TestMagicStepsDataset::test_dataloader_ultimo_batch PASSED                                                                      [ 24%]
+tests/test_model.py::TestHealthEndpoint::test_health_200 PASSED                                                                                      [ 25%]
+tests/test_model.py::TestHealthEndpoint::test_health_campos PASSED                                                                                   [ 26%]
+tests/test_model.py::TestHealthEndpoint::test_health_sem_modelo PASSED                                                                               [ 27%]
+tests/test_model.py::TestHealthEndpoint::test_health_sem_preprocessor PASSED                                                                         [ 28%]
+tests/test_model.py::TestInfoEndpoint::test_info_200 PASSED                                                                                          [ 30%]
+tests/test_model.py::TestInfoEndpoint::test_info_campos_obrigatórios PASSED                                                                          [ 31%]
+tests/test_model.py::TestInfoEndpoint::test_info_features_tem_16_items PASSED                                                                        [ 32%]
+tests/test_model.py::TestInfoEndpoint::test_info_best_params_fields PASSED                                                                           [ 33%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_200 PASSED                                                                                  [ 34%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_quantidade PASSED                                                                           [ 36%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_campos_presentes PASSED                                                                     [ 37%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_tipos_válidos PASSED                                                                        [ 38%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_numericas_têm_range PASSED                                                                  [ 39%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_categoricas_têm_range PASSED                                                                [ 40%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_nomes_esperados PASSED                                                                      [ 42%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_turma_range_contem_letras PASSED                                                            [ 43%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_genero_range PASSED                                                                         [ 44%]
+tests/test_model.py::TestFeaturesEndpoint::test_features_pedra_range PASSED                                                                          [ 45%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_sem_auth_401 PASSED                                                                  [ 46%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_200 PASSED                                                                           [ 48%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_campos PASSED                                                                        [ 49%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_dim_normalizada PASSED                                                               [ 50%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_dim_engenheirada PASSED                                                              [ 51%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_preprocessor_info PASSED                                                             [ 53%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_normalized_range PASSED                                                              [ 54%]
+tests/test_model.py::TestFeaturesProcess::test_features_process_raw_preserved PASSED                                                                 [ 55%]
+tests/test_model.py::TestThresholdEndpoints::test_get_threshold_200 PASSED                                                                           [ 56%]
+tests/test_model.py::TestThresholdEndpoints::test_get_threshold_campos PASSED                                                                        [ 57%]
+tests/test_model.py::TestThresholdEndpoints::test_put_threshold_atualiza PASSED                                                                      [ 59%]
+tests/test_model.py::TestThresholdEndpoints::test_put_threshold_resposta PASSED                                                                      [ 60%]
+tests/test_model.py::TestThresholdEndpoints::test_put_threshold_fora_range PASSED                                                                    [ 61%]
+tests/test_model.py::TestThresholdEndpoints::test_put_threshold_negativo PASSED                                                                      [ 62%]
+tests/test_model.py::TestThresholdEndpoints::test_put_threshold_restaura_default PASSED                                                              [ 63%]
+tests/test_model.py::TestPredictEndpoint::test_predict_200 PASSED                                                                                    [ 65%]
+tests/test_model.py::TestPredictEndpoint::test_monitor_logs PASSED                                                                                   [ 66%]
+tests/test_model.py::TestPredictEndpoint::test_predict_campos_obrigatórios PASSED                                                                    [ 67%]
+tests/test_model.py::TestPredictEndpoint::test_predict_probabilities_range PASSED                                                                    [ 68%]
+tests/test_model.py::TestPredictEndpoint::test_predict_classe_ternaria PASSED                                                                        [ 69%]
+tests/test_model.py::TestPredictEndpoint::test_predict_label_valido PASSED                                                                           [ 71%]
+tests/test_model.py::TestPredictEndpoint::test_predict_confidence_válido PASSED                                                                      [ 72%]
+tests/test_model.py::TestPredictEndpoint::test_predict_student_id_preservado PASSED                                                                  [ 73%]
+tests/test_model.py::TestPredictEndpoint::test_predict_student_id_nulo PASSED                                                                        [ 74%]
+tests/test_model.py::TestPredictEndpoint::test_predict_prediction_id_é_uuid PASSED                                                                   [ 75%]
+tests/test_model.py::TestPredictEndpoint::test_predict_timestamp_é_iso PASSED                                                                        [ 77%]
+tests/test_model.py::TestPredictEndpoint::test_predict_determinismo PASSED                                                                           [ 78%]
+tests/test_model.py::TestPredictEndpoint::test_predict_fase_fora_range PASSED                                                                        [ 79%]
+tests/test_model.py::TestPredictEndpoint::test_predict_fase_negativa PASSED                                                                          [ 80%]
+tests/test_model.py::TestPredictEndpoint::test_predict_nota_cg_zero PASSED                                                                           [ 81%]
+tests/test_model.py::TestPredictEndpoint::test_predict_turma_inválida PASSED                                                                         [ 83%]
+tests/test_model.py::TestPredictEndpoint::test_predict_genero_inválido PASSED                                                                        [ 84%]
+tests/test_model.py::TestPredictEndpoint::test_predict_pedra_inválida PASSED                                                                         [ 85%]
+tests/test_model.py::TestPredictEndpoint::test_predict_campo_ausente PASSED                                                                          [ 86%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_200 PASSED                                                                                 [ 87%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_campos_resposta PASSED                                                                     [ 89%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_total_correto PASSED                                                                       [ 90%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_cada_predição_completa PASSED                                                              [ 91%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_student_ids_preservados PASSED                                                             [ 92%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_probabilidades_válidas PASSED                                                              [ 93%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_consistente_com_individual PASSED                                                          [ 95%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_determinismo PASSED                                                                        [ 96%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_vazio_422 PASSED                                                                           [ 97%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_501_alunos_422 PASSED                                                                      [ 98%]
+tests/test_model.py::TestPredictBatchEndpoint::test_batch_inputs_diferentes PASSED                                                                   [100%]
+
+==================================================================== warnings summary ===================================================================== 
+tests/test_model.py::TestHealthEndpoint::test_health_200
+  E:\Repos\magic-steps-case\app\main.py:223: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+tests/test_model.py::TestHealthEndpoint::test_health_200
+tests/test_model.py::TestHealthEndpoint::test_health_200
+  e:\Repos\magic-steps-case\.venv\lib\site-packages\fastapi\applications.py:4576: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)
+
+tests/test_model.py::TestHealthEndpoint::test_health_200
+  E:\Repos\magic-steps-case\app\main.py:241: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================================================= 83 passed, 4 warnings in 13.28s =============================================================
